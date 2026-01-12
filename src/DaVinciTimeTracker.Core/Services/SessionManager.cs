@@ -174,11 +174,13 @@ public class SessionManager
 
     private void StartSession(string projectName)
     {
+        // Don't create ProjectSession yet - wait until GraceStart completes
+        // Store the project name temporarily
         _currentSession = new ProjectSession
         {
             Id = Guid.NewGuid(),
             ProjectName = projectName,
-            StartTime = DateTime.UtcNow,
+            StartTime = DateTime.MinValue, // Placeholder - will be set in TransitionToTracking
             FlushedEnd = null
         };
 
@@ -186,8 +188,8 @@ public class SessionManager
         _graceEndStartTime = null;
         _state = TrackingState.GraceStart;
 
-        _logger.Information("Started session in GraceStart: {ProjectName}", projectName);
-        SessionStarted?.Invoke(this, _currentSession);
+        _logger.Information("Entered GraceStart for project: {ProjectName} (not tracking yet)", projectName);
+        // Don't fire SessionStarted yet - wait until we transition to Tracking
     }
 
     private void TransitionToTracking()
@@ -198,9 +200,22 @@ public class SessionManager
             return;
         }
 
+        if (_currentSession == null || _sessionStartTime == null)
+        {
+            _logger.Error("TransitionToTracking called but session or start time is null");
+            return;
+        }
+
+        // NOW we officially start tracking - set the actual StartTime retroactively to when GraceStart began
+        _currentSession.StartTime = _sessionStartTime.Value;
         _state = TrackingState.Tracking;
-        _logger.Information("Transitioned to Tracking ({Duration} elapsed)",
+
+        _logger.Information("Transitioned to Tracking for project: {ProjectName} ({Duration} elapsed, tracking starts from GraceStart time)",
+            _currentSession.ProjectName,
             TrackingConfiguration.GraceStartDuration);
+
+        // Fire SessionStarted event NOW (not during GraceStart)
+        SessionStarted?.Invoke(this, _currentSession);
     }
 
     private void EnterGracePeriod()
@@ -237,6 +252,24 @@ public class SessionManager
             return;
         }
 
+        // Check if we're ending during GraceStart (before actual tracking began)
+        var wasInGraceStart = _state == TrackingState.GraceStart;
+
+        if (wasInGraceStart)
+        {
+            // Exiting during GraceStart - no tracking should occur
+            _logger.Information("Exited during GraceStart for project: {ProjectName} - no session recorded",
+                _currentSession.ProjectName);
+
+            // Don't fire SessionEnded event - session never truly started
+            _currentSession = null;
+            _sessionStartTime = null;
+            _graceEndStartTime = null;
+            _state = TrackingState.NotTracking;
+            return;
+        }
+
+        // Normal session end (was in Tracking or GraceEnd state)
         _currentSession.EndTime = DateTime.UtcNow;
 
         _logger.Information("Ended session: {ProjectName} (Duration: {Duration})",

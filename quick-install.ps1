@@ -67,19 +67,45 @@ $version = if (Test-Path $versionFile) { Get-Content $versionFile } else { "Unkn
 
 Write-Success "Found version: $version"
 
-# Check if app is running
-$runningProcess = Get-Process -Name "DaVinciTimeTracker.App" -ErrorAction SilentlyContinue
-if ($runningProcess) {
-    Write-Info "Application is currently running..."
-    $response = Read-Host "Close it and continue? (Y/N)"
-    if ($response -eq 'Y' -or $response -eq 'y') {
-        Stop-Process -Name "DaVinciTimeTracker.App" -Force
-        Start-Sleep -Seconds 2
-        Write-Success "Application closed"
-    } else {
-        Write-Info "Installation cancelled"
-        exit 0
+# Check if app is running and kill it automatically
+Write-Header "Checking for Running Application"
+$runningProcesses = Get-Process -Name "DaVinciTimeTracker.App" -ErrorAction SilentlyContinue
+if ($runningProcesses) {
+    $processCount = ($runningProcesses | Measure-Object).Count
+    Write-Info "Found $processCount running instance(s) of DaVinci Time Tracker"
+    Write-Info "Closing application..."
+    
+    try {
+        # Stop all instances
+        Stop-Process -Name "DaVinciTimeTracker.App" -Force -ErrorAction Stop
+        
+        # Wait for processes to fully terminate
+        $maxWaitSeconds = 10
+        $waited = 0
+        while ((Get-Process -Name "DaVinciTimeTracker.App" -ErrorAction SilentlyContinue) -and ($waited -lt $maxWaitSeconds)) {
+            Start-Sleep -Seconds 1
+            $waited++
+            Write-Host "." -NoNewline
+        }
+        Write-Host ""
+        
+        # Verify processes are gone
+        $stillRunning = Get-Process -Name "DaVinciTimeTracker.App" -ErrorAction SilentlyContinue
+        if ($stillRunning) {
+            Write-Fail "Failed to close application after $maxWaitSeconds seconds"
+            Write-Host "Please close the application manually and try again." -ForegroundColor Yellow
+            exit 1
+        }
+        
+        Write-Success "Application closed successfully"
+        Start-Sleep -Seconds 1  # Extra delay to ensure file handles are released
+    } catch {
+        Write-Fail "Error closing application: $_"
+        Write-Host "Please close the application manually and try again." -ForegroundColor Yellow
+        exit 1
     }
+} else {
+    Write-Success "No running instances found"
 }
 
 # Create temp directory
@@ -153,25 +179,135 @@ try {
         Write-Success "Python found: $pythonVersion"
     } else {
         Write-Info "Python not found in PATH"
-        Write-Host "  Download from: https://www.python.org/downloads/" -ForegroundColor Yellow
-        Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
+        
+        # Check if winget is available
+        $wingetCheck = Get-Command winget -ErrorAction SilentlyContinue
+        if ($wingetCheck) {
+            Write-Host ""
+            Write-Host "Python is required for DaVinci Time Tracker to work." -ForegroundColor Yellow
+            $installPython = Read-Host "Would you like to install Python automatically using winget? (Y/N)"
+            
+            if ($installPython -eq 'Y' -or $installPython -eq 'y') {
+                Write-Info "Installing Python 3.12 via winget..."
+                Write-Host "This may take a few minutes..." -ForegroundColor Gray
+                
+                try {
+                    # Install Python 3.12 (latest stable version)
+                    $wingetOutput = winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements 2>&1
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Success "Python installed successfully!"
+                        Write-Info "Refreshing environment variables..."
+                        
+                        # Refresh PATH environment variable
+                        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+                        
+                        # Verify installation
+                        Start-Sleep -Seconds 2
+                        $pythonCheckAfter = Get-Command python -ErrorAction SilentlyContinue
+                        if ($pythonCheckAfter) {
+                            $pythonVersion = & python --version 2>&1
+                            Write-Success "Python is now available: $pythonVersion"
+                        } else {
+                            Write-Info "Python installed but not yet in PATH"
+                            Write-Host "  You may need to restart your terminal or computer" -ForegroundColor Yellow
+                            Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
+                        }
+                    } else {
+                        Write-Fail "Python installation failed (exit code: $LASTEXITCODE)"
+                        Write-Host "  Please install manually from: https://www.python.org/downloads/" -ForegroundColor Yellow
+                        Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
+                    }
+                } catch {
+                    Write-Fail "Error installing Python: $_"
+                    Write-Host "  Please install manually from: https://www.python.org/downloads/" -ForegroundColor Yellow
+                    Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Info "Python installation skipped"
+                Write-Host "  Download manually from: https://www.python.org/downloads/" -ForegroundColor Yellow
+                Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Info "winget not available - cannot auto-install Python"
+            Write-Host "  Download from: https://www.python.org/downloads/" -ForegroundColor Yellow
+            Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
+        }
     }
 
     # Check .NET
-    Write-Info "Checking for .NET 9..."
+    Write-Info "Checking for .NET 9 Desktop Runtime..."
     $dotnetCheck = Get-Command dotnet -ErrorAction SilentlyContinue
+    $dotnetDesktopFound = $false
+    
     if ($dotnetCheck) {
         $dotnetVersions = & dotnet --list-runtimes 2>&1 | Select-String "Microsoft.WindowsDesktop.App 9"
         if ($dotnetVersions) {
             Write-Success ".NET 9 Desktop Runtime found"
+            $dotnetDesktopFound = $true
+        }
+    }
+    
+    if (-not $dotnetDesktopFound) {
+        Write-Info ".NET 9 Desktop Runtime not found"
+        
+        # Check if winget is available
+        $wingetCheck = Get-Command winget -ErrorAction SilentlyContinue
+        if ($wingetCheck) {
+            Write-Host ""
+            Write-Host ".NET 9 Desktop Runtime is required for DaVinci Time Tracker." -ForegroundColor Yellow
+            $installDotnet = Read-Host "Would you like to install it automatically using winget? (Y/N)"
+            
+            if ($installDotnet -eq 'Y' -or $installDotnet -eq 'y') {
+                Write-Info "Installing .NET 9 Desktop Runtime via winget..."
+                Write-Host "This may take a few minutes..." -ForegroundColor Gray
+                
+                try {
+                    # Install .NET 9 Desktop Runtime
+                    $wingetOutput = winget install Microsoft.DotNet.DesktopRuntime.9 --silent --accept-package-agreements --accept-source-agreements 2>&1
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Success ".NET 9 Desktop Runtime installed successfully!"
+                        Write-Info "Refreshing environment variables..."
+                        
+                        # Refresh PATH environment variable
+                        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+                        
+                        # Verify installation
+                        Start-Sleep -Seconds 2
+                        $dotnetCheckAfter = Get-Command dotnet -ErrorAction SilentlyContinue
+                        if ($dotnetCheckAfter) {
+                            $dotnetVersionsAfter = & dotnet --list-runtimes 2>&1 | Select-String "Microsoft.WindowsDesktop.App 9"
+                            if ($dotnetVersionsAfter) {
+                                Write-Success ".NET 9 Desktop Runtime is now available"
+                            } else {
+                                Write-Info ".NET installed but verification pending"
+                                Write-Host "  You may need to restart your terminal or computer" -ForegroundColor Yellow
+                            }
+                        } else {
+                            Write-Info ".NET installed but not yet in PATH"
+                            Write-Host "  You may need to restart your terminal or computer" -ForegroundColor Yellow
+                        }
+                    } else {
+                        Write-Fail ".NET installation failed (exit code: $LASTEXITCODE)"
+                        Write-Host "  Please install manually from: https://dotnet.microsoft.com/download/dotnet/9.0" -ForegroundColor Yellow
+                        Write-Host "  Required: '.NET 9 Desktop Runtime'" -ForegroundColor Yellow
+                    }
+                } catch {
+                    Write-Fail "Error installing .NET: $_"
+                    Write-Host "  Please install manually from: https://dotnet.microsoft.com/download/dotnet/9.0" -ForegroundColor Yellow
+                    Write-Host "  Required: '.NET 9 Desktop Runtime'" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Info ".NET installation skipped"
+                Write-Host "  Download from: https://dotnet.microsoft.com/download/dotnet/9.0" -ForegroundColor Yellow
+                Write-Host "  Required: '.NET 9 Desktop Runtime'" -ForegroundColor Yellow
+            }
         } else {
-            Write-Info ".NET 9 Desktop Runtime NOT found"
+            Write-Info "winget not available - cannot auto-install .NET"
             Write-Host "  Download from: https://dotnet.microsoft.com/download/dotnet/9.0" -ForegroundColor Yellow
             Write-Host "  Required: '.NET 9 Desktop Runtime'" -ForegroundColor Yellow
         }
-    } else {
-        Write-Info ".NET not found"
-        Write-Host "  Download from: https://dotnet.microsoft.com/download/dotnet/9.0" -ForegroundColor Yellow
     }
 
     # Start application

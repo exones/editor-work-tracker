@@ -8,6 +8,7 @@ public class ProjectStatistics
     public DateTime LastActivity { get; set; }
     public int SessionCount { get; set; }
     public bool IsCurrentlyTracking { get; set; }
+    public string? CurrentState { get; set; } // Added: GraceStart, Tracking, GraceEnd, NotTracking
 }
 
 public class TimeSpanDto

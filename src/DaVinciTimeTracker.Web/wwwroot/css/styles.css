@@ -53,7 +53,11 @@ header h1 {
     background: #4ade80;
 }
 
-.status-indicator.paused {
+.status-indicator.gracestart {
+    background: #fbbf24;
+}
+
+.status-indicator.graceend {
     background: #fb923c;
 }
 
@@ -99,6 +103,11 @@ main {
     background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
 }
 
+.project-card.grace-start {
+    border-color: #fbbf24;
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.1) 0%, rgba(245, 158, 11, 0.1) 100%);
+}
+
 .project-header {
     display: flex;
     justify-content: space-between;
@@ -123,6 +132,16 @@ main {
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
+}
+
+.tracking-badge.grace-start {
+    background: #fbbf24;
+    color: #1e293b;
+}
+
+.tracking-badge.grace-end {
+    background: #fb923c;
+    color: white;
 }
 
 .project-stats {

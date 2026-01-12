@@ -29,6 +29,16 @@ public class ApiController : ControllerBase
         Response.Headers.ContentType = "application/json; charset=utf-8";
         var sessions = await _repository.GetAllSessionsAsync();
         var stats = _statisticsService.CalculateStatistics(sessions, _sessionManager.CurrentProjectName);
+        
+        // Add current state information to the currently tracking project
+        foreach (var stat in stats)
+        {
+            if (stat.IsCurrentlyTracking)
+            {
+                stat.CurrentState = _sessionManager.CurrentState.ToString();
+            }
+        }
+        
         return Ok(stats);
     }
 

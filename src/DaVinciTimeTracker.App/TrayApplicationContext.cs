@@ -81,8 +81,8 @@ public class TrayApplicationContext : ApplicationContext
         switch (state)
         {
             case TrackingState.GraceStart:
-                _statusItem.Text = $"● Tracking: {projectName} [Starting]";
-                _trayIcon.Text = $"Tracking: {projectName} [Starting]";
+                _statusItem.Text = $"⏱ Grace Start: {projectName} [Not tracking yet]";
+                _trayIcon.Text = $"Grace Start: {projectName} [Not tracking yet]";
                 break;
             case TrackingState.Tracking:
                 _statusItem.Text = $"● Tracking: {projectName}";

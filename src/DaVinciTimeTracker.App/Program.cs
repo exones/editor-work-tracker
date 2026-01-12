@@ -74,22 +74,33 @@ try
             db.Database.Migrate();
             Log.Information("Database initialized");
 
-            // Crash recovery: Close all open sessions
+            // Crash recovery: Finalize all open sessions from previous run
             var openSessions = db.ProjectSessions.Where(s => s.EndTime == null).ToList();
             if (openSessions.Any())
             {
-                Log.Warning("Found {Count} open session(s) from previous run - closing them", openSessions.Count);
+                Log.Warning("Crash recovery: Found {Count} open session(s) from previous run - finalizing them", openSessions.Count);
+
                 foreach (var session in openSessions)
                 {
-                    // Use FlushedEnd if available (last known good state), otherwise use UtcNow
-                    session.EndTime = session.FlushedEnd ?? DateTime.UtcNow;
-                    Log.Information("Closed orphaned session: {ProjectName} (Started: {Start}, Ended: {End})",
-                        session.ProjectName,
-                        session.StartTime,
-                        session.EndTime);
+                    // Check if this is a GraceStart placeholder (StartTime = DateTime.MinValue)
+                    if (session.StartTime == DateTime.MinValue)
+                    {
+                        // GraceStart placeholder - just delete it (never actually tracked)
+                        Log.Information("Removing GraceStart placeholder: {ProjectName}", session.ProjectName);
+                        db.ProjectSessions.Remove(session);
+                    }
+                    else
+                    {
+                        // Real session - finalize with best available time
+                        session.EndTime = session.FlushedEnd ?? DateTime.UtcNow;
+                        var duration = session.EndTime.Value - session.StartTime;
+                        Log.Information("Finalized session: {ProjectName} (Duration: {Duration:hh\\:mm\\:ss})",
+                            session.ProjectName, duration);
+                    }
                 }
+
                 db.SaveChanges();
-                Log.Information("All orphaned sessions closed");
+                Log.Information("Crash recovery complete - all sessions finalized. Monitoring will resume and detect any active DaVinci projects.");
             }
         }
 
@@ -181,21 +192,24 @@ try
 
     sessionManager.SessionEnded += async (sender, session) => await saveSession(session);
 
-    // Periodic save every 30 seconds for all active states (GraceStart, Tracking, GraceEnd)
+    // Periodic save every 30 seconds for actively tracking sessions (NOT GraceStart)
     var periodicSaveTimer = new System.Timers.Timer(30000);
     periodicSaveTimer.Elapsed += async (sender, e) =>
     {
         var currentState = sessionManager.CurrentState;
 
-        // Save for all non-NotTracking states
-        if (currentState != TrackingState.NotTracking)
+        // Only save sessions that are actually tracking (Tracking or GraceEnd)
+        // Don't save GraceStart placeholders - they're not real sessions yet
+        if (currentState == TrackingState.Tracking || currentState == TrackingState.GraceEnd)
         {
             var currentSession = sessionManager.GetCurrentSession();
-            if (currentSession != null)
+            if (currentSession != null && currentSession.StartTime != DateTime.MinValue)
             {
                 // Update FlushedEnd for crash recovery
                 currentSession.FlushedEnd = DateTime.UtcNow;
                 await saveSession(currentSession);
+                Log.Debug("Periodic save: {ProjectName} in state {State}",
+                    currentSession.ProjectName, currentState);
             }
         }
     };

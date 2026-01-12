@@ -104,6 +104,23 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
     public void Start()
     {
         _logger.Information("Starting DaVinci Resolve monitor");
+        
+        // Immediately check current state (don't wait for first timer tick)
+        _logger.Information("Performing initial DaVinci state check...");
+        Task.Run(async () =>
+        {
+            try
+            {
+                await CheckProjectAsync();
+                CheckWindowFocus();
+                _logger.Information("Initial state check complete");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error during initial state check");
+            }
+        });
+        
         _pollTimer.Start();
     }
 

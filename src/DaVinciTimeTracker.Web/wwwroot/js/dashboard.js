@@ -29,8 +29,16 @@ function updateStatusBar(status) {
     indicator.className = "status-indicator";
 
     if (status.isTracking) {
-        statusText.textContent = `Currently tracking: "${status.projectName}" [${status.state}]`;
-        indicator.classList.add(status.state.toLowerCase());
+        if (status.state === "GraceStart") {
+            statusText.textContent = `Grace Start: "${status.projectName}" (not tracking yet)`;
+            indicator.classList.add("gracestart");
+        } else if (status.state === "GraceEnd") {
+            statusText.textContent = `Tracking: "${status.projectName}" [Grace Period]`;
+            indicator.classList.add("graceend");
+        } else {
+            statusText.textContent = `Currently tracking: "${status.projectName}"`;
+            indicator.classList.add("tracking");
+        }
     } else {
         statusText.textContent = "Not tracking";
         indicator.classList.add("idle");
@@ -78,12 +86,29 @@ function renderProjects(projects) {
 
     container.innerHTML = projects
         .map(
-            project => `
-        <div class="project-card ${project.isCurrentlyTracking ? "currently-tracking" : ""}">
+            project => {
+                let badge = "";
+                let cardClass = "";
+                
+                if (project.isCurrentlyTracking) {
+                    if (project.currentState === "GraceStart") {
+                        badge = '<span class="tracking-badge grace-start">⏱ Grace Start</span>';
+                        cardClass = "grace-start";
+                    } else if (project.currentState === "GraceEnd") {
+                        badge = '<span class="tracking-badge grace-end">⏳ Grace Period</span>';
+                        cardClass = "currently-tracking";
+                    } else {
+                        badge = '<span class="tracking-badge">● Tracking</span>';
+                        cardClass = "currently-tracking";
+                    }
+                }
+                
+                return `
+        <div class="project-card ${cardClass}">
             <div class="project-header">
                 <div class="project-name">
                     ${escapeHtml(project.projectName)}
-                    ${project.isCurrentlyTracking ? '<span class="tracking-badge">● Tracking</span>' : ""}
+                    ${badge}
                 </div>
                 <button class="btn-delete" onclick="showDeleteConfirmation('${escapeHtml(project.projectName)}')" title="Delete project">
                     🗑️
@@ -104,7 +129,8 @@ function renderProjects(projects) {
                 </div>
             </div>
         </div>
-    `,
+    `;
+            },
         )
         .join("");
 }
