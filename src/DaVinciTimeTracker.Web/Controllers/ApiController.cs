@@ -28,17 +28,18 @@ public class ApiController : ControllerBase
     {
         Response.Headers.ContentType = "application/json; charset=utf-8";
         var sessions = await _repository.GetAllSessionsAsync();
-        var stats = _statisticsService.CalculateStatistics(sessions, _sessionManager.CurrentProjectName);
-        
-        // Add current state information to the currently tracking project
+        var currentUserName = _sessionManager.CurrentUserName;
+        var stats = _statisticsService.CalculateStatistics(sessions, _sessionManager.CurrentProjectName, currentUserName);
+
+        // Add current state information to the currently tracking project for current user
         foreach (var stat in stats)
         {
-            if (stat.IsCurrentlyTracking)
+            if (stat.IsCurrentlyTracking && stat.UserName == currentUserName)
             {
                 stat.CurrentState = _sessionManager.CurrentState.ToString();
             }
         }
-        
+
         return Ok(stats);
     }
 
@@ -57,6 +58,7 @@ public class ApiController : ControllerBase
         return Ok(new
         {
             ProjectName = _sessionManager.CurrentProjectName,
+            UserName = _sessionManager.CurrentUserName,
             State = _sessionManager.CurrentState.ToString(),
             IsTracking = _sessionManager.CurrentState != Core.Models.TrackingState.NotTracking
         });

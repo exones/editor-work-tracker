@@ -266,6 +266,18 @@ if (-not [string]::IsNullOrEmpty($NetworkShare)) {
             Write-Success "Copied quick-install launcher"
         }
 
+        # Copy diagnostics scripts
+        $diagnosticsDir = "diagnostics"
+        $diagnosticScript = Join-Path $diagnosticsDir "resolve-python-diagnose.ps1"
+        if (Test-Path $diagnosticScript) {
+            $destDiagnosticsDir = Join-Path $NetworkShare "diagnostics"
+            if (-not (Test-Path $destDiagnosticsDir)) {
+                New-Item -ItemType Directory -Path $destDiagnosticsDir -Force | Out-Null
+            }
+            Copy-Item $diagnosticScript (Join-Path $destDiagnosticsDir "resolve-python-diagnose.ps1") -Force
+            Write-Success "Copied Resolve/Python diagnostic script"
+        }
+
         # Create/update latest.zip symlink (always points to newest version)
         $latestZip = Join-Path $NetworkShare "DaVinciTimeTracker-latest.zip"
         if (Test-Path $latestZip) {

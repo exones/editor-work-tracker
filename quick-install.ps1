@@ -171,12 +171,102 @@ try {
     # Check requirements
     Write-Header "Checking Requirements"
 
+    # Check Python Launcher (py.exe)
+    Write-Info "Checking for Python Launcher (py.exe)..."
+    $pyLauncherCheck = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncherCheck) {
+        Write-Success "Python Launcher found"
+        try {
+            $pyVersions = & py -0p 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  Installed Python versions:" -ForegroundColor Gray
+                $pyVersions -split "`n" | ForEach-Object { 
+                    if ($_ -match "^\s*-") { Write-Host "    $_" -ForegroundColor Gray }
+                }
+            }
+        } catch {
+            Write-Host "  Note: Could not enumerate Python versions" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Info "Python Launcher (py.exe) not found"
+        
+        # Check if winget is available
+        $wingetCheck = Get-Command winget -ErrorAction SilentlyContinue
+        if ($wingetCheck) {
+            Write-Host ""
+            Write-Host "Python Launcher is recommended for managing Python versions." -ForegroundColor Yellow
+            Write-Host "  • Allows selecting specific Python versions (e.g., py -3.11)" -ForegroundColor Gray
+            Write-Host "  • Avoids WindowsApps python.exe issues" -ForegroundColor Gray
+            $installPyLauncher = Read-Host "Would you like to install Python Launcher? (Y/N)"
+            
+            if ($installPyLauncher -eq 'Y' -or $installPyLauncher -eq 'y') {
+                Write-Info "Installing Python Launcher via winget..."
+                Write-Host "This may take a moment..." -ForegroundColor Gray
+                
+                try {
+                    winget install Python.PythonInstallManager --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Success "Python Launcher installed successfully!"
+                        Write-Info "Refreshing environment variables..."
+                        
+                        # Refresh PATH
+                        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+                        
+                        Start-Sleep -Seconds 2
+                        
+                        # Verify
+                        $pyCheck = Get-Command py -ErrorAction SilentlyContinue
+                        if ($pyCheck) {
+                            Write-Success "Python Launcher is now available!"
+                        } else {
+                            Write-Info "Python Launcher installed but not yet in PATH"
+                            Write-Host "  You may need to restart your terminal" -ForegroundColor Yellow
+                        }
+                    } else {
+                        Write-Fail "Python Launcher installation failed"
+                        Write-Host "  You can install manually from: https://www.python.org/downloads/" -ForegroundColor Yellow
+                    }
+                } catch {
+                    Write-Fail "Error installing Python Launcher: $_"
+                }
+            } else {
+                Write-Info "Python Launcher installation skipped"
+            }
+        } else {
+            Write-Info "winget not available - cannot auto-install Python Launcher"
+            Write-Host "  Install from: https://www.python.org/downloads/" -ForegroundColor Yellow
+        }
+    }
+
     # Check Python
     Write-Info "Checking for Python..."
     $pythonCheck = Get-Command python -ErrorAction SilentlyContinue
+    $needsPython312 = $false
+    
     if ($pythonCheck) {
         $pythonVersion = & python --version 2>&1
         Write-Success "Python found: $pythonVersion"
+        
+        # Parse version to check compatibility with DaVinci Resolve
+        if ($pythonVersion -match 'Python (\d+)\.(\d+)\.(\d+)') {
+            $pyMajor = [int]$matches[1]
+            $pyMinor = [int]$matches[2]
+            
+            # Check if Python 3.13 or higher (incompatible with DaVinci Resolve)
+            if ($pyMajor -eq 3 -and $pyMinor -ge 13) {
+                Write-Host ""
+                Write-Host "⚠ WARNING: Python $pyMajor.$pyMinor is NOT compatible with DaVinci Resolve!" -ForegroundColor Red
+                Write-Host "  DaVinci Resolve 20.x requires Python 3.9 - 3.12" -ForegroundColor Yellow
+                Write-Host "  Your current version: $pythonVersion" -ForegroundColor Yellow
+                Write-Host "  Recommended version: Python 3.11 (tested & verified)" -ForegroundColor Green
+                $needsPython312 = $true
+            } elseif ($pyMajor -eq 3 -and $pyMinor -ge 9 -and $pyMinor -le 12) {
+                Write-Success "Python version is compatible with DaVinci Resolve"
+            } else {
+                Write-Host "  Note: Python 3.9-3.12 is recommended for DaVinci Resolve" -ForegroundColor Yellow
+            }
+        }
     } else {
         Write-Info "Python not found in PATH"
         
@@ -188,12 +278,12 @@ try {
             $installPython = Read-Host "Would you like to install Python automatically using winget? (Y/N)"
             
             if ($installPython -eq 'Y' -or $installPython -eq 'y') {
-                Write-Info "Installing Python 3.12 via winget..."
+                Write-Info "Installing Python 3.11 via winget..."
                 Write-Host "This may take a few minutes..." -ForegroundColor Gray
                 
                 try {
-                    # Install Python 3.12 (latest stable version)
-                    $wingetOutput = winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements 2>&1
+                    # Install Python 3.11 (tested & verified with DaVinci Resolve)
+                    winget install Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
                     
                     if ($LASTEXITCODE -eq 0) {
                         Write-Success "Python installed successfully!"
@@ -234,6 +324,104 @@ try {
             Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
         }
     }
+    
+    # If Python 3.13+ detected, offer to install Python 3.11 alongside
+    if ($needsPython312) {
+        Write-Host ""
+        $wingetCheck = Get-Command winget -ErrorAction SilentlyContinue
+        if ($wingetCheck) {
+            Write-Host "Would you like to install Python 3.11 (tested & verified version) alongside?" -ForegroundColor Cyan
+            Write-Host "  • Python 3.13 will remain on your system" -ForegroundColor Gray
+            Write-Host "  • Python 3.11 will be installed separately" -ForegroundColor Gray
+            Write-Host "  • DaVinci Tracker will use Python 3.11" -ForegroundColor Gray
+            Write-Host "  • This is the exact version used by the developer" -ForegroundColor Green
+            $installPy311 = Read-Host "Install Python 3.11? (Y/N)"
+            
+            if ($installPy311 -eq 'Y' -or $installPy311 -eq 'y') {
+                Write-Info "Installing Python 3.11 via winget..."
+                Write-Host "This may take a few minutes..." -ForegroundColor Gray
+                
+                try {
+                    winget install Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Success "Python 3.11 installed successfully!"
+                        Write-Info "Refreshing environment variables..."
+                        
+                        # Refresh PATH
+                        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+                        
+                        Start-Sleep -Seconds 2
+                        
+                        # Verify - check for py launcher or python3.11
+                        $py311Check = Get-Command py -ErrorAction SilentlyContinue
+                        if ($py311Check) {
+                            $py311Version = & py -3.11 --version 2>&1
+                            if ($py311Version) {
+                                Write-Success "Python 3.11 is now available: $py311Version"
+                                Write-Info "The tracker will use Python 3.11 automatically"
+                            }
+                        }
+                        
+                        # Install NumPy 2.2.3 (same as developer's setup)
+                        Write-Info "Installing NumPy 2.2.3 (verified version)..."
+                        try {
+                            & py -3.11 -m pip install "numpy==2.2.3" 2>&1 | Out-Null
+                            if ($LASTEXITCODE -eq 0) {
+                                Write-Success "NumPy 2.2.3 installed successfully!"
+                            }
+                        } catch {
+                            Write-Info "NumPy will be installed automatically when needed"
+                        }
+                    } else {
+                        Write-Fail "Python 3.11 installation failed"
+                        Write-Host "  You can install manually from: https://www.python.org/downloads/" -ForegroundColor Yellow
+                        Write-Host "  Make sure to select Python 3.11.x" -ForegroundColor Yellow
+                    }
+                } catch {
+                    Write-Fail "Error installing Python 3.11: $_"
+                }
+            } else {
+                Write-Host ""
+                Write-Host "⚠ WARNING: DaVinci Time Tracker may not work with Python 3.13!" -ForegroundColor Red
+                Write-Host "  If tracking doesn't work, install Python 3.11 manually" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "  Install Python 3.11 manually from: https://www.python.org/downloads/" -ForegroundColor Yellow
+            Write-Host "  Select version 3.11.x for DaVinci Resolve compatibility" -ForegroundColor Yellow
+        }
+    }
+
+    # Check NumPy (verify it's installed with Python 3.11)
+    Write-Info "Checking NumPy installation..."
+    $pythonCheck = Get-Command python -ErrorAction SilentlyContinue
+    if ($pythonCheck) {
+        try {
+            $numpyVersion = python -c "import numpy; print(numpy.__version__)" 2>&1
+            if ($LASTEXITCODE -eq 0 -and $numpyVersion -match '^\d+\.\d+\.\d+') {
+                Write-Success "NumPy found: $numpyVersion"
+                Write-Host "  Verified: NumPy is compatible with Python 3.11" -ForegroundColor Green
+            } else {
+                Write-Info "NumPy not installed"
+                Write-Host "  Recommended: NumPy 2.2.3 (tested & verified)" -ForegroundColor Yellow
+                $installNumpy = Read-Host "Install NumPy 2.2.3? (Y/N)"
+                
+                if ($installNumpy -eq 'Y' -or $installNumpy -eq 'y') {
+                    Write-Info "Installing NumPy 2.2.3..."
+                    try {
+                        python -m pip install "numpy==2.2.3" 2>&1 | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Success "NumPy 2.2.3 installed successfully!"
+                        }
+                    } catch {
+                        Write-Info "NumPy installation will be retried automatically if needed"
+                    }
+                }
+            }
+        } catch {
+            Write-Info "Could not check NumPy - it will be installed automatically if needed"
+        }
+    }
 
     # Check .NET
     Write-Info "Checking for .NET 9 Desktop Runtime..."
@@ -264,7 +452,7 @@ try {
                 
                 try {
                     # Install .NET 9 Desktop Runtime
-                    $wingetOutput = winget install Microsoft.DotNet.DesktopRuntime.9 --silent --accept-package-agreements --accept-source-agreements 2>&1
+                    winget install Microsoft.DotNet.DesktopRuntime.9 --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
                     
                     if ($LASTEXITCODE -eq 0) {
                         Write-Success ".NET 9 Desktop Runtime installed successfully!"

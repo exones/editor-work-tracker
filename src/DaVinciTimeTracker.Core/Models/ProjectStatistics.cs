@@ -3,6 +3,7 @@ namespace DaVinciTimeTracker.Core.Models;
 public class ProjectStatistics
 {
     public string ProjectName { get; set; } = string.Empty;
+    public string UserName { get; set; } = string.Empty;
     public TimeSpanDto TotalActiveTime { get; set; } = null!;
     public TimeSpanDto TotalElapsedTime { get; set; } = null!;
     public DateTime LastActivity { get; set; }

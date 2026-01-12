@@ -72,4 +72,32 @@ public static class WindowsApi
                (processName.Contains("Resolve", StringComparison.OrdinalIgnoreCase) ||
                 processName.Contains("DaVinci", StringComparison.OrdinalIgnoreCase));
     }
+
+    public static bool IsDaVinciResolveRunning()
+    {
+        try
+        {
+            // Check for common DaVinci Resolve process names
+            var processNames = new[] { "Resolve", "DaVinciResolve", "resolve" };
+
+            foreach (var name in processNames)
+            {
+                var processes = System.Diagnostics.Process.GetProcessesByName(name);
+                if (processes.Length > 0)
+                {
+                    // Dispose all process objects
+                    foreach (var p in processes)
+                        p.Dispose();
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch
+        {
+            // If we can't check, assume not running to avoid unnecessary API calls
+            return false;
+        }
+    }
 }

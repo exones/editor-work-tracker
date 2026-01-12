@@ -74,11 +74,16 @@ try
             db.Database.Migrate();
             Log.Information("Database initialized");
 
-            // Crash recovery: Finalize all open sessions from previous run
-            var openSessions = db.ProjectSessions.Where(s => s.EndTime == null).ToList();
+            // Crash recovery: Finalize all open sessions from previous run for current user only
+            var currentUser = Environment.UserName;
+            var openSessions = db.ProjectSessions
+                .Where(s => s.EndTime == null && s.UserName == currentUser)
+                .ToList();
+
             if (openSessions.Any())
             {
-                Log.Warning("Crash recovery: Found {Count} open session(s) from previous run - finalizing them", openSessions.Count);
+                Log.Warning("Crash recovery: Found {Count} open session(s) for user {UserName} from previous run - finalizing them",
+                    openSessions.Count, currentUser);
 
                 foreach (var session in openSessions)
                 {
@@ -86,7 +91,8 @@ try
                     if (session.StartTime == DateTime.MinValue)
                     {
                         // GraceStart placeholder - just delete it (never actually tracked)
-                        Log.Information("Removing GraceStart placeholder: {ProjectName}", session.ProjectName);
+                        Log.Information("Removing GraceStart placeholder: {ProjectName} for user {UserName}",
+                            session.ProjectName, session.UserName);
                         db.ProjectSessions.Remove(session);
                     }
                     else
@@ -94,13 +100,13 @@ try
                         // Real session - finalize with best available time
                         session.EndTime = session.FlushedEnd ?? DateTime.UtcNow;
                         var duration = session.EndTime.Value - session.StartTime;
-                        Log.Information("Finalized session: {ProjectName} (Duration: {Duration:hh\\:mm\\:ss})",
-                            session.ProjectName, duration);
+                        Log.Information("Finalized session: {ProjectName} for user {UserName} (Duration: {Duration:hh\\:mm\\:ss})",
+                            session.ProjectName, session.UserName, duration);
                     }
                 }
 
                 db.SaveChanges();
-                Log.Information("Crash recovery complete - all sessions finalized. Monitoring will resume and detect any active DaVinci projects.");
+                Log.Information("Crash recovery complete for user {UserName} - all sessions finalized. Monitoring will resume and detect any active DaVinci projects.", currentUser);
             }
         }
 

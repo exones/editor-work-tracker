@@ -14,6 +14,8 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
     private string? _currentProject;
     private bool _wasInFocus = false;
     private bool _disposed;
+    private bool _wasProcessRunning = false;
+    private bool _sanityCheckPassed = false;
 
     public string? CurrentProject => _currentProject;
 
@@ -53,6 +55,42 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
 
     private async Task CheckProjectAsync()
     {
+        // OPTIMIZATION: Check if DaVinci Resolve process is running before calling Python API
+        var isProcessRunning = WindowsApi.IsDaVinciResolveRunning();
+        
+        if (!isProcessRunning)
+        {
+            // If DaVinci was open and now it's closed
+            if (_currentProject != null)
+            {
+                _logger.Information("DaVinci Resolve process not running - closing project: {ProjectName}", _currentProject);
+                ProjectClosed?.Invoke(this, EventArgs.Empty);
+                _currentProject = null;
+                _wasInFocus = false;
+            }
+            
+            // Reset state when process stops
+            _wasProcessRunning = false;
+            _sanityCheckPassed = false;
+            
+            return; // Skip expensive Python API call
+        }
+
+        // DaVinci process just started - run sanity check ONCE
+        if (isProcessRunning && !_wasProcessRunning)
+        {
+            _logger.Information("DaVinci Resolve process detected - running connection sanity check...");
+            _wasProcessRunning = true;
+            _sanityCheckPassed = await _apiClient.RunSanityCheckAsync();
+            
+            if (!_sanityCheckPassed)
+            {
+                _logger.Error("DaVinci API sanity check FAILED - tracking may not work correctly");
+                _logger.Error("Please review the diagnostic messages above and fix the issues");
+            }
+        }
+
+        // Process is running, now check project via Python API
         var projectName = await _apiClient.GetCurrentProjectNameAsync();
 
         if (projectName != _currentProject)

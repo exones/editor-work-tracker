@@ -1,10 +1,12 @@
 const API_BASE = "";
 let refreshInterval;
+let currentUser = "";
 
 async function fetchCurrentStatus() {
     try {
         const response = await fetch(`${API_BASE}/api/current`);
         const data = await response.json();
+        currentUser = data.userName;
         updateStatusBar(data);
     } catch (error) {
         console.error("Failed to fetch current status:", error);
@@ -84,54 +86,85 @@ function renderProjects(projects) {
         return;
     }
 
-    container.innerHTML = projects
-        .map(
-            project => {
-                let badge = "";
-                let cardClass = "";
-                
-                if (project.isCurrentlyTracking) {
-                    if (project.currentState === "GraceStart") {
-                        badge = '<span class="tracking-badge grace-start">⏱ Grace Start</span>';
-                        cardClass = "grace-start";
-                    } else if (project.currentState === "GraceEnd") {
-                        badge = '<span class="tracking-badge grace-end">⏳ Grace Period</span>';
-                        cardClass = "currently-tracking";
-                    } else {
-                        badge = '<span class="tracking-badge">● Tracking</span>';
-                        cardClass = "currently-tracking";
+    // Group projects by project name
+    const projectGroups = {};
+    projects.forEach(stat => {
+        if (!projectGroups[stat.projectName]) {
+            projectGroups[stat.projectName] = {
+                projectName: stat.projectName,
+                users: [],
+                lastActivity: stat.lastActivity,
+                hasActiveTracking: false
+            };
+        }
+        projectGroups[stat.projectName].users.push(stat);
+        if (stat.isCurrentlyTracking) {
+            projectGroups[stat.projectName].hasActiveTracking = true;
+        }
+        // Update last activity to most recent
+        if (new Date(stat.lastActivity) > new Date(projectGroups[stat.projectName].lastActivity)) {
+            projectGroups[stat.projectName].lastActivity = stat.lastActivity;
+        }
+    });
+
+    // Convert to array and sort by last activity
+    const sortedProjects = Object.values(projectGroups)
+        .sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
+
+    container.innerHTML = sortedProjects
+        .map(projectGroup => {
+            const cardClass = projectGroup.hasActiveTracking ? "currently-tracking" : "";
+            
+            const usersHtml = projectGroup.users
+                .sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity))
+                .map(user => {
+                    const isCurrentUser = user.userName === currentUser;
+                    const userBadge = isCurrentUser ? '<span class="user-badge-you">You</span>' : '';
+                    
+                    let trackingBadge = "";
+                    if (user.isCurrentlyTracking) {
+                        if (user.currentState === "GraceStart") {
+                            trackingBadge = '<span class="tracking-badge grace-start">⏱ Grace Start</span>';
+                        } else if (user.currentState === "GraceEnd") {
+                            trackingBadge = '<span class="tracking-badge grace-end">⏳ Grace Period</span>';
+                        } else {
+                            trackingBadge = '<span class="tracking-badge">● Tracking</span>';
+                        }
                     }
-                }
-                
-                return `
-        <div class="project-card ${cardClass}">
-            <div class="project-header">
-                <div class="project-name">
-                    ${escapeHtml(project.projectName)}
-                    ${badge}
+                    
+                    return `
+                        <div class="user-stat ${isCurrentUser ? 'current-user' : ''}">
+                            <div class="user-info">
+                                <span class="user-name">${escapeHtml(user.userName)}</span>
+                                ${userBadge}
+                                ${trackingBadge}
+                            </div>
+                            <div class="user-time-info">
+                                <span class="user-time">${formatTimeSpan(user.totalElapsedTime.totalSeconds)}</span>
+                                <span class="user-sessions">${user.sessionCount} session${user.sessionCount !== 1 ? 's' : ''}</span>
+                                <span class="user-last-activity">${formatLastActivity(user.lastActivity)}</span>
+                            </div>
+                        </div>
+                    `;
+                })
+                .join("");
+
+            return `
+                <div class="project-card ${cardClass}">
+                    <div class="project-header">
+                        <div class="project-name">
+                            ${escapeHtml(projectGroup.projectName)}
+                        </div>
+                        <button class="btn-delete" onclick="showDeleteConfirmation('${escapeHtml(projectGroup.projectName)}')" title="Delete project (all users)">
+                            🗑️
+                        </button>
+                    </div>
+                    <div class="users-container">
+                        ${usersHtml}
+                    </div>
                 </div>
-                <button class="btn-delete" onclick="showDeleteConfirmation('${escapeHtml(project.projectName)}')" title="Delete project">
-                    🗑️
-                </button>
-            </div>
-            <div class="project-stats">
-                <div class="stat">
-                    <span class="stat-label">Total Time</span>
-                    <span class="stat-value">${formatTimeSpan(project.totalElapsedTime.totalSeconds)}</span>
-                </div>
-                <div class="stat">
-                    <span class="stat-label">Sessions</span>
-                    <span class="stat-value">${project.sessionCount}</span>
-                </div>
-                <div class="stat">
-                    <span class="stat-label">Last Activity</span>
-                    <span class="stat-value">${formatLastActivity(project.lastActivity)}</span>
-                </div>
-            </div>
-        </div>
-    `;
-            },
-        )
+            `;
+        })
         .join("");
 }
 

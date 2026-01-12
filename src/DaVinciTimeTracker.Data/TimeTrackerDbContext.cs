@@ -18,7 +18,11 @@ public class TimeTrackerDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.ProjectName).IsRequired();
+            entity.Property(e => e.UserName).IsRequired().HasDefaultValue("Unknown");
             entity.Property(e => e.StartTime).IsRequired();
+
+            // Create index for multi-user queries
+            entity.HasIndex(e => e.UserName);
         });
     }
 }

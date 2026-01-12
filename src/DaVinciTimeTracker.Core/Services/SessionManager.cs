@@ -8,6 +8,7 @@ public class SessionManager
 {
 
     private readonly ILogger _logger;
+    private readonly string _currentUserName;
     private ProjectSession? _currentSession;
     private TrackingState _state = TrackingState.NotTracking;
     private DateTime? _sessionStartTime;     // When GraceStart began
@@ -18,6 +19,7 @@ public class SessionManager
 
     public TrackingState CurrentState => _state;
     public string? CurrentProjectName => _currentSession?.ProjectName;
+    public string CurrentUserName => _currentUserName;
     public DateTime? SessionStartTime => _sessionStartTime;
 
     public TimeSpan? GraceStartElapsedTime => _sessionStartTime.HasValue && _state == TrackingState.GraceStart
@@ -31,6 +33,8 @@ public class SessionManager
     public SessionManager(ILogger logger)
     {
         _logger = logger;
+        _currentUserName = Environment.UserName;
+        _logger.Information("SessionManager initialized for user: {UserName}", _currentUserName);
     }
 
     public ProjectSession? GetCurrentSession()
@@ -180,6 +184,7 @@ public class SessionManager
         {
             Id = Guid.NewGuid(),
             ProjectName = projectName,
+            UserName = _currentUserName,
             StartTime = DateTime.MinValue, // Placeholder - will be set in TransitionToTracking
             FlushedEnd = null
         };
@@ -188,7 +193,8 @@ public class SessionManager
         _graceEndStartTime = null;
         _state = TrackingState.GraceStart;
 
-        _logger.Information("Entered GraceStart for project: {ProjectName} (not tracking yet)", projectName);
+        _logger.Information("Entered GraceStart for project: {ProjectName}, user: {UserName} (not tracking yet)",
+            projectName, _currentUserName);
         // Don't fire SessionStarted yet - wait until we transition to Tracking
     }
 
