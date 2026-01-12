@@ -1,0 +1,322 @@
+# DaVinci Time Tracker - .gitignore
+
+## .NET Build Outputs
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa]rm/
+[Aa]rm64/
+bld/
+[Bb]uild/
+
+## .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## NuGet Packages
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+*.nuget.props
+*.nuget.targets
+
+## Build Results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## Visual Studio Cache/Options
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.csproj.user
+.idea/
+
+## Rider
+.idea/
+*.sln.iml
+
+## Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+## Entity Framework Migrations (keep source, ignore temp)
+*.dbmdl
+*.jfm
+
+## SQLite Database Files (runtime data, not source)
+*.db
+*.db-shm
+*.db-wal
+davinci-timetracker.db*
+
+## Application Data & Logs (runtime)
+logs/
+*.log
+[Ll]og/
+[Ll]ogs/
+
+## Release Packages (generated artifacts)
+releases/
+*.zip
+!releases/.gitkeep
+
+## Test Results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.trx
+*.coverage
+*.coveragexml
+
+## Publish Profiles
+*.pubxml
+*.pubxml.user
+*.publishsettings
+
+## User-specific Files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+launchSettings.json
+
+## Resharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+## JustCode
+.JustCode
+
+## TeamCity
+_TeamCity*
+
+## DotCover
+*.dotCover
+
+## NCrunch
+_NCrunch_*
+.*crunch*.local.xml
+nCrunchTemp_*
+
+## MightyMoose
+*.mm.*
+AutoTest.Net/
+
+## Web Workbench (preprocessors)
+.sass-cache/
+
+## Installshield
+[Ee]xpress/
+
+## DocProject
+DocProject/buildhelp/
+DocProject/Help/*.HxT
+DocProject/Help/*.HxC
+DocProject/Help/*.hhc
+DocProject/Help/*.hhk
+DocProject/Help/*.hhp
+DocProject/Help/Html2
+DocProject/Help/html
+
+## Click-Once directory
+publish/
+
+## Publish Web Output
+*.[Pp]ublish.xml
+*.azurePubxml
+
+## Windows Store app package directories and files
+AppPackages/
+BundleArtifacts/
+Package.StoreAssociation.xml
+_pkginfo.txt
+*.appx
+*.appxbundle
+*.appxupload
+
+## Azure Stream Analytics
+ASALocalRun/
+
+## SQL Server files
+*.mdf
+*.ldf
+*.ndf
+
+## Business Intelligence projects
+*.rdl.data
+*.bim.layout
+*.bim_*.settings
+*.rptproj.rsuser
+*- [Bb]ackup.rdl
+*- [Bb]ackup ([0-9]).rdl
+*- [Bb]ackup ([0-9][0-9]).rdl
+
+## Microsoft Fakes
+FakesAssemblies/
+
+## GhostDoc plugin
+*.GhostDoc.xml
+
+## Node.js (if any frontend tooling is added)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+## OS Files
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+## Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg
+MANIFEST
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.hypothesis/
+.pytest_cache/
+*.mo
+*.pot
+
+## Temporary Files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~.nib
+local.properties
+
+## Backup Files
+*.orig
+*.bak
+*.backup
+*~
+
+## Environment Files
+.env
+.env.local
+.env.*.local
+
+## Keep Important Files
+# Keep Python script (it's source code)
+!src/DaVinciTimeTracker.Core/Resolve/resolve_api.py
+
+# Keep wwwroot files (they're source)
+!src/DaVinciTimeTracker.Web/wwwroot/**/*
+
+# Keep documentation
+!*.md
+!*.txt
+
+# Keep build scripts
+!*.ps1
+!*.bat
+!*.sh
+
+# Keep project files
+!*.csproj
+!*.sln
+!*.props
+!*.targets
+
+# Keep source code
+!*.cs
+!*.html
+!*.css
+!*.js
+!*.json
+!appsettings.json
+!appsettings.*.json
+
+## Exceptions (keep these)
+!.gitignore
+!.editorconfig
+!README.md
+!LICENSE

@@ -1,0 +1,20 @@
+@DaVinciTimeTracker.Web_HostAddress = http://localhost:5107
+@SampleProjectName = MyProject
+
+### Get all projects with statistics
+GET {{DaVinciTimeTracker.Web_HostAddress}}/api/projects
+Accept: application/json
+
+### Get current tracking status
+GET {{DaVinciTimeTracker.Web_HostAddress}}/api/current
+Accept: application/json
+
+### Get sessions for a specific project
+GET {{DaVinciTimeTracker.Web_HostAddress}}/api/projects/{{SampleProjectName}}/sessions
+Accept: application/json
+
+### Delete a project (use with caution)
+# DELETE {{DaVinciTimeTracker.Web_HostAddress}}/api/projects/{{SampleProjectName}}
+# Accept: application/json
+
+###

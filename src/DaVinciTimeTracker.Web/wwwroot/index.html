@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>DaVinci Time Tracker</title>
+        <link rel="stylesheet" href="/css/styles.css" />
+    </head>
+    <body>
+        <div class="container">
+            <header>
+                <h1>🎬 DaVinci Time Tracker</h1>
+                <div id="current-status" class="status-bar">
+                    <span class="status-indicator"></span>
+                    <span id="status-text">Loading...</span>
+                </div>
+            </header>
+
+            <main>
+                <div class="projects-list">
+                    <h2>Projects</h2>
+                    <div id="projects-container">
+                        <p class="loading">Loading projects...</p>
+                    </div>
+                </div>
+            </main>
+
+            <footer>
+                <p>Auto-refreshing every 5 seconds</p>
+            </footer>
+        </div>
+
+        <!-- Delete Confirmation Modal -->
+        <div id="delete-modal" class="modal">
+            <div class="modal-content">
+                <h2>Delete Project</h2>
+                <p class="modal-warning">⚠️ Are you sure you want to delete all tracking data for:</p>
+                <p class="modal-project-name" id="delete-project-name"></p>
+                <p class="modal-info">This action cannot be undone. All sessions for this project will be permanently deleted.</p>
+                <div class="modal-buttons">
+                    <button id="delete-confirm-btn" class="btn btn-danger">Yes, Delete</button>
+                    <button id="delete-cancel-btn" class="btn btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <script src="/js/dashboard.js"></script>
+    </body>
+</html>
