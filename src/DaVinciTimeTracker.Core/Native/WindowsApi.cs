@@ -68,9 +68,15 @@ public static class WindowsApi
     public static bool IsDaVinciResolveInFocus()
     {
         var processName = GetForegroundProcessName();
-        return processName != null &&
-               (processName.Contains("Resolve", StringComparison.OrdinalIgnoreCase) ||
-                processName.Contains("DaVinci", StringComparison.OrdinalIgnoreCase));
+        if (processName == null)
+        {
+            return false;
+        }
+
+        // Check for exact DaVinci Resolve process names
+        // Don't use Contains() to avoid matching our own "DaVinciTimeTracker" process!
+        var daVinciProcessNames = new[] { "Resolve", "DaVinciResolve", "resolve" };
+        return daVinciProcessNames.Contains(processName, StringComparer.OrdinalIgnoreCase);
     }
 
     public static bool IsDaVinciResolveRunning()

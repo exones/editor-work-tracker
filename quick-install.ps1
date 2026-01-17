@@ -242,14 +242,36 @@ try {
     # Check Python
     Write-Info "Checking for Python..."
     $pythonCheck = Get-Command python -ErrorAction SilentlyContinue
-    $needsPython312 = $false
+    $needsPythonOrg = $false
+    $isMicrosoftStore = $false
     
     if ($pythonCheck) {
         $pythonVersion = & python --version 2>&1
         Write-Success "Python found: $pythonVersion"
         
+        # Detect if it's Microsoft Store Python (incompatible with DaVinci Resolve)
+        try {
+            $pythonExePath = & python -c "import sys; print(sys.executable)" 2>&1
+            if ($pythonExePath -match "Microsoft\\WindowsApps" -or $pythonExePath -match "Microsoft Store") {
+                $isMicrosoftStore = $true
+                Write-Host ""
+                Write-Host "⚠ CRITICAL: Microsoft Store Python detected!" -ForegroundColor Red
+                Write-Host "  Path: $pythonExePath" -ForegroundColor Yellow
+                Write-Host "  Microsoft Store Python is INCOMPATIBLE with DaVinci Resolve's API" -ForegroundColor Red
+                Write-Host "  Reason: Binary module (fusionscript.dll) cannot load with Store Python" -ForegroundColor Yellow
+                Write-Host ""
+                Write-Host "  Solution: Install Python.org Python 3.11" -ForegroundColor Green
+                $needsPythonOrg = $true
+            } else {
+                Write-Host "  Source: Python.org installation" -ForegroundColor Green
+                Write-Host "  Path: $pythonExePath" -ForegroundColor Gray
+            }
+        } catch {
+            Write-Host "  Could not determine Python source" -ForegroundColor Yellow
+        }
+        
         # Parse version to check compatibility with DaVinci Resolve
-        if ($pythonVersion -match 'Python (\d+)\.(\d+)\.(\d+)') {
+        if (-not $isMicrosoftStore -and $pythonVersion -match 'Python (\d+)\.(\d+)\.(\d+)') {
             $pyMajor = [int]$matches[1]
             $pyMinor = [int]$matches[2]
             
@@ -260,82 +282,37 @@ try {
                 Write-Host "  DaVinci Resolve 20.x requires Python 3.9 - 3.12" -ForegroundColor Yellow
                 Write-Host "  Your current version: $pythonVersion" -ForegroundColor Yellow
                 Write-Host "  Recommended version: Python 3.11 (tested & verified)" -ForegroundColor Green
-                $needsPython312 = $true
+                $needsPythonOrg = $true
             } elseif ($pyMajor -eq 3 -and $pyMinor -ge 9 -and $pyMinor -le 12) {
-                Write-Success "Python version is compatible with DaVinci Resolve"
+                Write-Success "Python version is compatible with DaVinci Resolve ✓"
             } else {
                 Write-Host "  Note: Python 3.9-3.12 is recommended for DaVinci Resolve" -ForegroundColor Yellow
             }
         }
     } else {
+        $needsPythonOrg = $true
         Write-Info "Python not found in PATH"
-        
-        # Check if winget is available
-        $wingetCheck = Get-Command winget -ErrorAction SilentlyContinue
-        if ($wingetCheck) {
-            Write-Host ""
-            Write-Host "Python is required for DaVinci Time Tracker to work." -ForegroundColor Yellow
-            $installPython = Read-Host "Would you like to install Python automatically using winget? (Y/N)"
-            
-            if ($installPython -eq 'Y' -or $installPython -eq 'y') {
-                Write-Info "Installing Python 3.11 via winget..."
-                Write-Host "This may take a few minutes..." -ForegroundColor Gray
-                
-                try {
-                    # Install Python 3.11 (tested & verified with DaVinci Resolve)
-                    winget install Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
-                    
-                    if ($LASTEXITCODE -eq 0) {
-                        Write-Success "Python installed successfully!"
-                        Write-Info "Refreshing environment variables..."
-                        
-                        # Refresh PATH environment variable
-                        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-                        
-                        # Verify installation
-                        Start-Sleep -Seconds 2
-                        $pythonCheckAfter = Get-Command python -ErrorAction SilentlyContinue
-                        if ($pythonCheckAfter) {
-                            $pythonVersion = & python --version 2>&1
-                            Write-Success "Python is now available: $pythonVersion"
-                        } else {
-                            Write-Info "Python installed but not yet in PATH"
-                            Write-Host "  You may need to restart your terminal or computer" -ForegroundColor Yellow
-                            Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
-                        }
-                    } else {
-                        Write-Fail "Python installation failed (exit code: $LASTEXITCODE)"
-                        Write-Host "  Please install manually from: https://www.python.org/downloads/" -ForegroundColor Yellow
-                        Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
-                    }
-                } catch {
-                    Write-Fail "Error installing Python: $_"
-                    Write-Host "  Please install manually from: https://www.python.org/downloads/" -ForegroundColor Yellow
-                    Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
-                }
-            } else {
-                Write-Info "Python installation skipped"
-                Write-Host "  Download manually from: https://www.python.org/downloads/" -ForegroundColor Yellow
-                Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
-            }
-        } else {
-            Write-Info "winget not available - cannot auto-install Python"
-            Write-Host "  Download from: https://www.python.org/downloads/" -ForegroundColor Yellow
-            Write-Host "  Or set DAVINCI_TRACKER_PYTHON environment variable" -ForegroundColor Yellow
-        }
     }
     
-    # If Python 3.13+ detected, offer to install Python 3.11 alongside
-    if ($needsPython312) {
+    # If Python.org Python is needed (Store Python / Python 3.13+ / missing)
+    if ($needsPythonOrg) {
         Write-Host ""
         $wingetCheck = Get-Command winget -ErrorAction SilentlyContinue
         if ($wingetCheck) {
-            Write-Host "Would you like to install Python 3.11 (tested & verified version) alongside?" -ForegroundColor Cyan
-            Write-Host "  • Python 3.13 will remain on your system" -ForegroundColor Gray
-            Write-Host "  • Python 3.11 will be installed separately" -ForegroundColor Gray
-            Write-Host "  • DaVinci Tracker will use Python 3.11" -ForegroundColor Gray
-            Write-Host "  • This is the exact version used by the developer" -ForegroundColor Green
-            $installPy311 = Read-Host "Install Python 3.11? (Y/N)"
+            if ($isMicrosoftStore) {
+                Write-Host "Fix Microsoft Store Python issue:" -ForegroundColor Cyan
+                Write-Host "  1. Install Python.org Python 3.11 (tested & verified)" -ForegroundColor Green
+                Write-Host "  2. Microsoft Store Python will remain but won't be used" -ForegroundColor Gray  
+                Write-Host "  3. DaVinci Tracker will automatically use Python.org Python" -ForegroundColor Gray
+                Write-Host ""
+                Write-Host "Note: You can optionally uninstall Microsoft Store Python after:" -ForegroundColor Yellow
+                Write-Host "      Settings → Apps → Python 3.10 → Uninstall" -ForegroundColor Gray
+            } else {
+                Write-Host "Would you like to install Python 3.11 (tested & verified version)?" -ForegroundColor Cyan
+                Write-Host "  • DaVinci Tracker will use Python 3.11" -ForegroundColor Gray
+                Write-Host "  • This is the exact version used by the developer" -ForegroundColor Green
+            }
+            $installPy311 = Read-Host "Install Python.org Python 3.11? (Y/N)"
             
             if ($installPy311 -eq 'Y' -or $installPy311 -eq 'y') {
                 Write-Info "Installing Python 3.11 via winget..."
@@ -389,37 +366,6 @@ try {
         } else {
             Write-Host "  Install Python 3.11 manually from: https://www.python.org/downloads/" -ForegroundColor Yellow
             Write-Host "  Select version 3.11.x for DaVinci Resolve compatibility" -ForegroundColor Yellow
-        }
-    }
-
-    # Check NumPy (verify it's installed with Python 3.11)
-    Write-Info "Checking NumPy installation..."
-    $pythonCheck = Get-Command python -ErrorAction SilentlyContinue
-    if ($pythonCheck) {
-        try {
-            $numpyVersion = python -c "import numpy; print(numpy.__version__)" 2>&1
-            if ($LASTEXITCODE -eq 0 -and $numpyVersion -match '^\d+\.\d+\.\d+') {
-                Write-Success "NumPy found: $numpyVersion"
-                Write-Host "  Verified: NumPy is compatible with Python 3.11" -ForegroundColor Green
-            } else {
-                Write-Info "NumPy not installed"
-                Write-Host "  Recommended: NumPy 2.2.3 (tested & verified)" -ForegroundColor Yellow
-                $installNumpy = Read-Host "Install NumPy 2.2.3? (Y/N)"
-                
-                if ($installNumpy -eq 'Y' -or $installNumpy -eq 'y') {
-                    Write-Info "Installing NumPy 2.2.3..."
-                    try {
-                        python -m pip install "numpy==2.2.3" 2>&1 | Out-Null
-                        if ($LASTEXITCODE -eq 0) {
-                            Write-Success "NumPy 2.2.3 installed successfully!"
-                        }
-                    } catch {
-                        Write-Info "NumPy installation will be retried automatically if needed"
-                    }
-                }
-            }
-        } catch {
-            Write-Info "Could not check NumPy - it will be installed automatically if needed"
         }
     }
 

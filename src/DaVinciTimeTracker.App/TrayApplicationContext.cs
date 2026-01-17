@@ -3,6 +3,8 @@ using DaVinciTimeTracker.Core.Utilities;
 using Serilog;
 using System;
 using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
@@ -21,6 +23,11 @@ public class TrayApplicationContext : ApplicationContext
     private ToolStripMenuItem _exitItem;
     private System.Windows.Forms.Timer _updateTimer;
     private AutoStartManager _autoStartManager;
+
+    // Static cached icons for different states - created once
+    private static readonly Icon _grayIcon = CreateColoredIcon(Color.Gray);
+    private static readonly Icon _yellowIcon = CreateColoredIcon(Color.Orange);
+    private static readonly Icon _greenIcon = CreateColoredIcon(Color.LimeGreen);
 
     public TrayApplicationContext()
     {
@@ -54,13 +61,18 @@ public class TrayApplicationContext : ApplicationContext
 
         _trayIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = _grayIcon,
             ContextMenuStrip = _contextMenu,
             Visible = true,
-            Text = "DaVinci Time Tracker"
+            Text = "DaVinci Time Tracker",
+            BalloonTipIcon = ToolTipIcon.Info
         };
 
         _trayIcon.DoubleClick += (s, e) => OnOpenDashboard(s, e);
+
+        // Log balloon tip events for debugging
+        _trayIcon.BalloonTipShown += (s, e) => Log.Debug("Balloon tip shown");
+        _trayIcon.BalloonTipClosed += (s, e) => Log.Debug("Balloon tip closed");
 
         // Update status periodically
         _updateTimer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -69,6 +81,7 @@ public class TrayApplicationContext : ApplicationContext
 
         // Subscribe to session events for notifications
         AppState.SessionManager.SessionStarted += OnSessionStarted;
+        AppState.SessionManager.SessionEnded += OnSessionEnded;
 
         UpdateStatus(null, EventArgs.Empty);
     }
@@ -83,10 +96,12 @@ public class TrayApplicationContext : ApplicationContext
             case TrackingState.GraceStart:
                 _statusItem.Text = $"⏱ Grace Start: {projectName} [Not tracking yet]";
                 _trayIcon.Text = $"Grace Start: {projectName} [Not tracking yet]";
+                _trayIcon.Icon = _yellowIcon;
                 break;
             case TrackingState.Tracking:
                 _statusItem.Text = $"● Tracking: {projectName}";
                 _trayIcon.Text = $"Tracking: {projectName}";
+                _trayIcon.Icon = _greenIcon;
                 break;
             case TrackingState.GraceEnd:
                 var graceTimeRemaining = AppState.SessionManager.GraceEndElapsedTime;
@@ -95,18 +110,78 @@ public class TrayApplicationContext : ApplicationContext
                     : 10;
                 _statusItem.Text = $"⏳ Tracking: {projectName} [Grace Period - {minutesRemaining}m]";
                 _trayIcon.Text = $"Tracking: {projectName} [Grace Period - {minutesRemaining}m]";
+                _trayIcon.Icon = _yellowIcon;
                 break;
             default:
                 _statusItem.Text = "○ Not tracking";
                 _trayIcon.Text = "DaVinci Time Tracker - Idle";
+                _trayIcon.Icon = _grayIcon;
                 break;
         }
     }
 
     private void OnSessionStarted(object? sender, ProjectSession session)
     {
-        _trayIcon.ShowBalloonTip(3000, "Tracking Started",
-            $"Now tracking: {session.ProjectName}", ToolTipIcon.Info);
+        Log.Information("📢 Notification: Tracking started for {ProjectName}", session.ProjectName);
+
+        // Ensure tray icon is visible before showing balloon tip
+        if (_trayIcon.Visible)
+        {
+            _trayIcon.ShowBalloonTip(
+                timeout: 5000,
+                tipTitle: "🟢 Tracking Started",
+                tipText: $"Now tracking: {session.ProjectName}",
+                tipIcon: ToolTipIcon.Info);
+        }
+    }
+
+    private void OnSessionEnded(object? sender, ProjectSession session)
+    {
+        var duration = session.EndTime.HasValue
+            ? session.EndTime.Value - session.StartTime
+            : TimeSpan.Zero;
+
+        var durationText = duration.TotalHours >= 1
+            ? $"{duration.Hours}h {duration.Minutes}m"
+            : $"{duration.Minutes}m {duration.Seconds}s";
+
+        Log.Information("📢 Notification: Tracking stopped for {ProjectName}, Duration: {Duration}",
+            session.ProjectName, durationText);
+
+        // Ensure tray icon is visible before showing balloon tip
+        if (_trayIcon.Visible)
+        {
+            _trayIcon.ShowBalloonTip(
+                timeout: 5000,
+                tipTitle: "⚪ Tracking Stopped",
+                tipText: $"{session.ProjectName}\nDuration: {durationText}",
+                tipIcon: ToolTipIcon.Info);
+        }
+    }
+
+    private static Icon CreateColoredIcon(Color color)
+    {
+        // Create a 16x16 bitmap for tray icon
+        var bitmap = new Bitmap(16, 16);
+        using (var g = Graphics.FromImage(bitmap))
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Color.Transparent);
+
+            // Draw filled circle
+            using (var brush = new SolidBrush(color))
+            {
+                g.FillEllipse(brush, 2, 2, 12, 12);
+            }
+
+            // Draw border for better visibility
+            using (var pen = new Pen(Color.FromArgb(180, color), 1.5f))
+            {
+                g.DrawEllipse(pen, 2, 2, 12, 12);
+            }
+        }
+
+        return Icon.FromHandle(bitmap.GetHicon());
     }
 
     private void OnOpenDashboard(object? sender, EventArgs e)
@@ -235,6 +310,8 @@ public class TrayApplicationContext : ApplicationContext
             _trayIcon?.Dispose();
             _contextMenu?.Dispose();
             _updateTimer?.Dispose();
+            // Note: Static icons (_grayIcon, _yellowIcon, _greenIcon) are not disposed here
+            // as they're shared across the application lifetime
         }
         base.Dispose(disposing);
     }

@@ -13,6 +13,7 @@ public class SessionManager
     private TrackingState _state = TrackingState.NotTracking;
     private DateTime? _sessionStartTime;     // When GraceStart began
     private DateTime? _graceEndStartTime;    // When GraceEnd began
+    private DateTime? _lastActivityDuringGraceStart;  // Track if user was active during GraceStart
 
     public event EventHandler<ProjectSession>? SessionStarted;
     public event EventHandler<ProjectSession>? SessionEnded;
@@ -104,6 +105,12 @@ public class SessionManager
     {
         _logger.Information("HandleUserActive, CurrentState: {State}", _state);
 
+        // Track activity during GraceStart to ensure user is actually present
+        if (_state == TrackingState.GraceStart)
+        {
+            _lastActivityDuringGraceStart = DateTime.UtcNow;
+        }
+
         switch (_state)
         {
             case TrackingState.GraceEnd:
@@ -116,6 +123,12 @@ public class SessionManager
     // Called periodically by TimeTrackingService timer
     public void CheckStateTransitions(bool isDaVinciInFocus, bool isUserActive, string? currentProject)
     {
+        // Track user activity during GraceStart period
+        if (_state == TrackingState.GraceStart && isUserActive)
+        {
+            _lastActivityDuringGraceStart = DateTime.UtcNow;
+        }
+
         switch (_state)
         {
             case TrackingState.GraceStart:
@@ -125,15 +138,17 @@ public class SessionManager
                     var graceStartDuration = DateTime.UtcNow - _sessionStartTime.Value;
                     if (graceStartDuration >= TrackingConfiguration.GraceStartDuration)
                     {
-                        // Verify conditions are still valid before transitioning
-                        if (isDaVinciInFocus && isUserActive && currentProject != null)
+                        // Require: DaVinci in focus, project open, AND user was active at least once during GraceStart
+                        bool hadActivityDuringGrace = _lastActivityDuringGraceStart.HasValue;
+
+                        if (isDaVinciInFocus && currentProject != null && hadActivityDuringGrace)
                         {
                             TransitionToTracking();
                         }
                         else
                         {
-                            _logger.Information("GraceStart expired but conditions not valid (Focus: {Focus}, Active: {Active}, Project: {Project}) - ending session",
-                                isDaVinciInFocus, isUserActive, currentProject != null);
+                            _logger.Information("GraceStart expired but conditions not valid (Focus: {Focus}, Project: {Project}, HadActivity: {HadActivity}) - ending session",
+                                isDaVinciInFocus, currentProject != null, hadActivityDuringGrace);
                             EndCurrentSession();
                         }
                     }
@@ -191,6 +206,7 @@ public class SessionManager
 
         _sessionStartTime = DateTime.UtcNow;
         _graceEndStartTime = null;
+        _lastActivityDuringGraceStart = null; // Reset activity tracking for new grace period
         _state = TrackingState.GraceStart;
 
         _logger.Information("Entered GraceStart for project: {ProjectName}, user: {UserName} (not tracking yet)",
@@ -271,6 +287,7 @@ public class SessionManager
             _currentSession = null;
             _sessionStartTime = null;
             _graceEndStartTime = null;
+            _lastActivityDuringGraceStart = null;
             _state = TrackingState.NotTracking;
             return;
         }
@@ -287,6 +304,7 @@ public class SessionManager
         _currentSession = null;
         _sessionStartTime = null;
         _graceEndStartTime = null;
+        _lastActivityDuringGraceStart = null;
         _state = TrackingState.NotTracking;
     }
 }
