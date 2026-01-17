@@ -1,5 +1,6 @@
 using DaVinciTimeTracker.Core.Models;
 using DaVinciTimeTracker.Core.Utilities;
+using Microsoft.Toolkit.Uwp.Notifications;
 using Serilog;
 using System;
 using System.Diagnostics;
@@ -8,6 +9,7 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+using Windows.UI.Notifications;
 
 namespace DaVinciTimeTracker.App;
 
@@ -64,15 +66,10 @@ public class TrayApplicationContext : ApplicationContext
             Icon = _grayIcon,
             ContextMenuStrip = _contextMenu,
             Visible = true,
-            Text = "DaVinci Time Tracker",
-            BalloonTipIcon = ToolTipIcon.Info
+            Text = "DaVinci Time Tracker"
         };
 
         _trayIcon.DoubleClick += (s, e) => OnOpenDashboard(s, e);
-
-        // Log balloon tip events for debugging
-        _trayIcon.BalloonTipShown += (s, e) => Log.Debug("Balloon tip shown");
-        _trayIcon.BalloonTipClosed += (s, e) => Log.Debug("Balloon tip closed");
 
         // Update status periodically
         _updateTimer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -110,7 +107,7 @@ public class TrayApplicationContext : ApplicationContext
                     : 10;
                 _statusItem.Text = $"⏳ Tracking: {projectName} [Grace Period - {minutesRemaining}m]";
                 _trayIcon.Text = $"Tracking: {projectName} [Grace Period - {minutesRemaining}m]";
-                _trayIcon.Icon = _yellowIcon;
+                _trayIcon.Icon = _greenIcon; // Keep green during Grace End - we're still tracking
                 break;
             default:
                 _statusItem.Text = "○ Not tracking";
@@ -124,14 +121,19 @@ public class TrayApplicationContext : ApplicationContext
     {
         Log.Information("📢 Notification: Tracking started for {ProjectName}", session.ProjectName);
 
-        // Ensure tray icon is visible before showing balloon tip
-        if (_trayIcon.Visible)
+        try
         {
-            _trayIcon.ShowBalloonTip(
-                timeout: 5000,
-                tipTitle: "🟢 Tracking Started",
-                tipText: $"Now tracking: {session.ProjectName}",
-                tipIcon: ToolTipIcon.Info);
+            var toast = new ToastContentBuilder()
+                .AddText("🟢 Tracking Started")
+                .AddText($"Now tracking: {session.ProjectName}")
+                .GetToastContent();
+
+            ToastNotificationManagerCompat.CreateToastNotifier().Show(
+                new ToastNotification(toast.GetXml()));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to show toast notification for tracking start");
         }
     }
 
@@ -148,14 +150,20 @@ public class TrayApplicationContext : ApplicationContext
         Log.Information("📢 Notification: Tracking stopped for {ProjectName}, Duration: {Duration}",
             session.ProjectName, durationText);
 
-        // Ensure tray icon is visible before showing balloon tip
-        if (_trayIcon.Visible)
+        try
         {
-            _trayIcon.ShowBalloonTip(
-                timeout: 5000,
-                tipTitle: "⚪ Tracking Stopped",
-                tipText: $"{session.ProjectName}\nDuration: {durationText}",
-                tipIcon: ToolTipIcon.Info);
+            var toast = new ToastContentBuilder()
+                .AddText("⚪ Tracking Stopped")
+                .AddText($"{session.ProjectName}")
+                .AddText($"Duration: {durationText}")
+                .GetToastContent();
+
+            ToastNotificationManagerCompat.CreateToastNotifier().Show(
+                new ToastNotification(toast.GetXml()));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to show toast notification for tracking stop");
         }
     }
 

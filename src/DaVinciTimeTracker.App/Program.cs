@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Toolkit.Uwp.Notifications;
 using Serilog;
 using System;
 using System.Diagnostics;
@@ -34,6 +35,14 @@ try
 {
     // Application setup
     ApplicationConfiguration.Initialize();
+
+    // Register app for toast notifications
+    ToastNotificationManagerCompat.OnActivated += toastArgs =>
+    {
+        // Handle toast activation (e.g., user clicks the notification)
+        // For now, just log it
+        Log.Information("Toast notification activated");
+    };
 
     // Start web server in background
     var webServerTask = Task.Run(async () =>
