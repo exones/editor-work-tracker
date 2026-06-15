@@ -62,7 +62,13 @@ try:
             project = pm.GetCurrentProject()
             if project:
                 project_name = project.GetName()
-                print(project_name)
+                # GetCurrentPage() returns None when DaVinci is minimised or not in foreground.
+                # Only include page in output when we have a real value.
+                page = resolve.GetCurrentPage()
+                if page:
+                    print(f"{project_name}|{page}")
+                else:
+                    print(project_name)
                 sys.exit(0)
 
     print("NO_PROJECT")

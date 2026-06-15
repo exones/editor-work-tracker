@@ -132,6 +132,8 @@ function renderProjects(projects) {
                         }
                     }
                     
+                    const pageBreakdownHtml = renderPageBreakdown(user.pageBreakdown);
+
                     return `
                         <div class="user-stat ${isCurrentUser ? 'current-user' : ''}">
                             <div class="user-info">
@@ -144,6 +146,7 @@ function renderProjects(projects) {
                                 <span class="user-sessions">${user.sessionCount} session${user.sessionCount !== 1 ? 's' : ''}</span>
                                 <span class="user-last-activity">${formatLastActivity(user.lastActivity)}</span>
                             </div>
+                            ${pageBreakdownHtml}
                         </div>
                     `;
                 })
@@ -166,6 +169,46 @@ function renderProjects(projects) {
             `;
         })
         .join("");
+}
+
+// ── Page breakdown ────────────────────────────────────────────────────────────
+
+const PAGE_COLORS = {
+    color:     "#8b5cf6",   // violet
+    edit:      "#3b82f6",   // blue
+    cut:       "#06b6d4",   // cyan
+    media:     "#64748b",   // slate
+    fusion:    "#f97316",   // orange
+    fairlight: "#10b981",   // emerald
+    deliver:   "#6366f1",   // indigo
+    photo:     "#ec4899",   // pink
+    unknown:   "#94a3b8",   // gray
+};
+
+const PAGE_LABELS = {
+    color:     "Color",
+    edit:      "Edit",
+    cut:       "Cut",
+    media:     "Media",
+    fusion:    "Fusion",
+    fairlight: "Fairlight",
+    deliver:   "Deliver",
+    photo:     "Photo",
+};
+
+function renderPageBreakdown(breakdown) {
+    if (!breakdown || breakdown.length === 0) return "";
+
+    const chips = breakdown.map(p => {
+        const color = PAGE_COLORS[p.page] || PAGE_COLORS.unknown;
+        const label = PAGE_LABELS[p.page] || p.page;
+        const time  = formatTimeSpan(p.totalTime.totalSeconds);
+        return `<span class="page-chip" style="--chip-color:${color}" title="${label}: ${time} (${p.percentage}%)">
+            <span class="page-chip-dot"></span>${label} <span class="page-chip-meta">${time} · ${p.percentage}%</span>
+        </span>`;
+    }).join("");
+
+    return `<div class="page-chips">${chips}</div>`;
 }
 
 function escapeHtml(text) {

@@ -121,17 +121,14 @@ try
 
                 foreach (var session in openSessions)
                 {
-                    // Check if this is a GraceStart placeholder (StartTime = DateTime.MinValue)
                     if (session.StartTime == DateTime.MinValue)
                     {
-                        // GraceStart placeholder - just delete it (never actually tracked)
                         Log.Information("Removing GraceStart placeholder: {ProjectName} for user {UserName}",
                             session.ProjectName, session.UserName);
                         db.ProjectSessions.Remove(session);
                     }
                     else
                     {
-                        // Real session - finalize with best available time
                         session.EndTime = session.FlushedEnd ?? DateTime.UtcNow;
                         var duration = session.EndTime.Value - session.StartTime;
                         Log.Information("Finalized session: {ProjectName} for user {UserName} (Duration: {Duration:hh\\:mm\\:ss})",
@@ -142,6 +139,10 @@ try
                 db.SaveChanges();
                 Log.Information("Crash recovery complete for user {UserName} - all sessions finalized. Monitoring will resume and detect any active DaVinci projects.", currentUser);
             }
+
+            // Crash recovery: finalize any open page time entries
+            var tempRepo = new SessionRepository(db);
+            tempRepo.FinaliseOpenPageEntries(currentUser, db);
         }
 
         app.UseCors();
@@ -204,6 +205,27 @@ try
     // sessionManager was already created before the web server — reuse it
     var timeTrackingService = new TimeTrackingService(resolveMonitor, activityMonitor, sessionManager, Log.Logger);
 
+    // Page time tracking
+    var pageTracker = new PageTracker(resolveMonitor, sessionManager, Log.Logger);
+    pageTracker.PageSegmentEnded += async entry =>
+    {
+        try
+        {
+            using var dbCtx = new TimeTrackerDbContext(
+                new DbContextOptionsBuilder<TimeTrackerDbContext>()
+                    .UseSqlite(AppPaths.DatabaseConnectionString)
+                    .Options);
+            var repo = new SessionRepository(dbCtx);
+            await repo.SavePageEntryAsync(entry);
+            Log.Debug("Page segment saved: {Page} ({Duration:mm\\:ss})",
+                entry.Page, (entry.EndTime ?? DateTime.UtcNow) - entry.StartTime);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to save page time entry");
+        }
+    };
+
     // Now that Python is resolved, wire the correct executable into NodeToggleService
     nodeToggleService.SetPythonExecutable(pythonPath, AppPaths.NodeToggleScriptPath);
     var hotkeyManager = HotkeyManagerFactory.Create(Log.Logger);
@@ -261,11 +283,26 @@ try
             var currentSession = sessionManager.GetCurrentSession();
             if (currentSession != null && currentSession.StartTime != DateTime.MinValue)
             {
-                // Update FlushedEnd for crash recovery
                 currentSession.FlushedEnd = DateTime.UtcNow;
                 await saveSession(currentSession);
                 Log.Debug("Periodic save: {ProjectName} in state {State}",
                     currentSession.ProjectName, currentState);
+            }
+
+            // Also flush the open page entry for crash recovery
+            pageTracker.FlushCurrentEntry();
+            var currentEntry = pageTracker.CurrentEntry;
+            if (currentEntry != null)
+            {
+                try
+                {
+                    using var dbCtx = new TimeTrackerDbContext(
+                        new DbContextOptionsBuilder<TimeTrackerDbContext>()
+                            .UseSqlite(AppPaths.DatabaseConnectionString)
+                            .Options);
+                    await new SessionRepository(dbCtx).SavePageEntryAsync(currentEntry);
+                }
+                catch (Exception ex) { Log.Error(ex, "Failed to flush page entry"); }
             }
         }
     };
@@ -282,6 +319,7 @@ try
     periodicSaveTimer.Stop();
     periodicSaveTimer.Dispose();
     timeTrackingService.Dispose();
+    pageTracker.Dispose();
     hotkeyManager.Dispose();
     nodeToggleService.Dispose();
     Log.Information("DaVinci Time Tracker stopped");

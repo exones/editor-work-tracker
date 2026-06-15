@@ -12,17 +12,21 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
     private readonly ILogger _logger;
     private readonly Timer _pollTimer;
     private string? _currentProject;
+    private string? _currentPage;
     private bool _wasInFocus = false;
     private bool _disposed;
     private bool _wasProcessRunning = false;
     private bool _sanityCheckPassed = false;
 
     public string? CurrentProject => _currentProject;
+    public string? CurrentPage => _currentPage;
 
     public event EventHandler<string>? ProjectChanged;
     public event EventHandler? ProjectClosed;
     public event EventHandler? WindowFocusLost;
     public event EventHandler? WindowFocusGained;
+    /// <summary>Fires when the active DaVinci page changes while a project is open.</summary>
+    public event EventHandler<string>? PageChanged;
 
     public DaVinciResolveMonitor(ResolveApiClient apiClient, ILogger logger, int pollIntervalMs = 2000)
     {
@@ -90,16 +94,17 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
             }
         }
 
-        // Process is running, now check project via Python API
-        var projectName = await _apiClient.GetCurrentProjectNameAsync();
+        // Process is running, now check project + page via Python API
+        var (projectName, page) = await _apiClient.GetCurrentProjectNameAsync();
 
         if (projectName != _currentProject)
         {
             if (projectName == null && _currentProject != null)
             {
-                // Project closed
+                // Project closed — also clear page
                 _logger.Information("DaVinci project closed: {ProjectName}", _currentProject);
                 ProjectClosed?.Invoke(this, EventArgs.Empty);
+                _currentPage = null;
             }
             else if (projectName != null)
             {
@@ -109,6 +114,14 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
             }
 
             _currentProject = projectName;
+        }
+
+        // Detect page changes (only while a project is open)
+        if (_currentProject != null && page != null && page != _currentPage)
+        {
+            _logger.Debug("DaVinci page changed: {OldPage} → {NewPage}", _currentPage, page);
+            _currentPage = page;
+            PageChanged?.Invoke(this, page);
         }
     }
 

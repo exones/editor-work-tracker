@@ -212,7 +212,12 @@ public class ResolveApiClient
         }
     }
 
-    public async Task<string?> GetCurrentProjectNameAsync()
+    /// <summary>
+    /// Returns the current project name and active page from DaVinci Resolve.
+    /// Output format from resolve_api.py: "ProjectName|page" (e.g. "2026-POWERGRADE|color").
+    /// Returns (null, null) when no project is open or on error.
+    /// </summary>
+    public async Task<(string? ProjectName, string? Page)> GetCurrentProjectNameAsync()
     {
         try
         {
@@ -238,32 +243,39 @@ public class ResolveApiClient
 
             if (process.ExitCode == 0 && !output.Contains("NO_PROJECT"))
             {
-                var projectName = output.Trim();
+                var rawOutput = output.Trim();
+
+                // Parse "ProjectName|page" format
+                var parts = rawOutput.Split('|', 2);
+                var projectName = parts[0].Trim();
+                var page = parts.Length > 1 ? parts[1].Trim() : null;
 
                 // Treat "Untitled Project" as no project open
                 if (projectName.Equals("Untitled Project", StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.Debug("DaVinci opened without project (Untitled Project)");
-                    _consecutiveErrors = 0; // Reset error counter on success
+                    _consecutiveErrors = 0;
                     _lastErrorMessage = null;
-                    return null;
+                    return (null, null);
                 }
 
-                _logger.Debug("DaVinci project detected: {ProjectName}", projectName);
+                if (page != null)
+                    _logger.Debug("DaVinci project detected: {ProjectName} (page: {Page})", projectName, page);
+                else
+                    _logger.Debug("DaVinci project detected: {ProjectName}", projectName);
 
-                // Reset error tracking on successful API call
                 _consecutiveErrors = 0;
                 _lastErrorMessage = null;
 
-                return projectName;
+                return (projectName, page);
             }
 
             if (output.Contains("NO_PROJECT"))
             {
                 _logger.Debug("No DaVinci project currently open");
-                _consecutiveErrors = 0; // Reset error counter on success
+                _consecutiveErrors = 0;
                 _lastErrorMessage = null;
-                return null;
+                return (null, null);
             }
 
             // Detailed error logging with debouncing (avoid spam)
@@ -340,14 +352,14 @@ public class ResolveApiClient
                 }
             }
 
-            return null;
+            return (null, null);
         }
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to execute DaVinci API script:");
             _logger.Error("  Python: {PythonPath}", _pythonPath);
             _logger.Error("  Script: {ScriptPath}", _scriptPath);
-            return null;
+            return (null, null);
         }
     }
 }

@@ -244,6 +244,10 @@ for line in sys.stdin:
             _respond(handle_list(resolve))
         elif action in ("on", "off", "toggle"):
             _respond(handle_toggle(resolve, node_defs, action))
+        elif action == "get_page":
+            # GetCurrentPage() only works reliably from a persistent connection (returns None in fresh processes)
+            page = resolve.GetCurrentPage()
+            _respond({"status": "ok", "page": page})
         elif action == "ping":
             _respond({"status": "ok", "message": "pong"})
         else:
