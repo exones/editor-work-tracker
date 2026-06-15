@@ -141,7 +141,12 @@ if (-not (Test-Path $TrackerScriptPath)) {
     Write-Host "Tracker script FOUND." -ForegroundColor Green
 }
 
+$davinciResolveDir = "C:\Program Files\Blackmagic Design\DaVinci Resolve"
+
 Write-Section "Discover Python Executables"
+Write-Host "NOTE: fusionscript.pyd is a C extension that must match DaVinci's bundled Python ABI." -ForegroundColor Yellow
+Write-Host "      DaVinci Resolve 18/19 bundles Python 3.10 at:" -ForegroundColor Yellow
+Write-Host "      $davinciResolveDir\Python310\python.exe" -ForegroundColor Yellow
 $candidates = New-Object System.Collections.Generic.List[string]
 
 # 1) DAVINCI_TRACKER_PYTHON env var
@@ -168,7 +173,15 @@ try {
     }
 } catch {}
 
-# 4) Common locations (mirrors app resolver)
+# 4) DaVinci Resolve bundled Python — highest ABI compatibility for fusionscript.pyd
+$davinciPythons = @(
+    (Join-Path $davinciResolveDir "Python310\python.exe"),
+    (Join-Path $davinciResolveDir "Python\Python310\python.exe"),
+    (Join-Path $davinciResolveDir "Python\Python36\python.exe")
+)
+$davinciPythons | ForEach-Object { [void]$candidates.Add($_) }
+
+# 5) Common locations (mirrors app resolver)
 $common = @(
     "C:\Program Files\Python312\python.exe",
     "C:\Program Files\Python311\python.exe",
@@ -185,6 +198,8 @@ $common = @(
     (Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\python3.exe")
 )
 $common | ForEach-Object { [void]$candidates.Add($_) }
+
+# 6) Program Files glob — catches non-standard Python.org installs (handled dynamically in app)
 
 $pythonExes = Get-ExistingUniquePaths $candidates.ToArray()
 if ($pythonExes.Count -eq 0) {

@@ -76,7 +76,8 @@ public class ResolveApiClient
         if (!File.Exists(_pythonPath) && !CanFindInPath(_pythonPath))
         {
             _logger.Error("✗ FAIL: Python not found at: {PythonPath}", _pythonPath);
-            _logger.Error("→ Install Python 3.12+ or verify PATH");
+            _logger.Error("→ Set DAVINCI_TRACKER_PYTHON env var to a working Python path (e.g. C:\\Program Files\\PyManager\\python.exe)");
+            _logger.Error("→ Or install Python 3.8+ and verify it appears in PATH");
             return false;
         }
         _logger.Information("  Found: {PythonPath}", _pythonPath);
@@ -160,17 +161,16 @@ public class ResolveApiClient
                 (combinedLower.Contains("fusion") && combinedLower.Contains("failed")))
             {
                 _logger.Error("✗ FAIL: DaVinci Resolve Fusion script initialization failed");
-                _logger.Error("→ DaVinci Resolve process is running, but API cannot connect");
+                _logger.Error("→ fusionscript.dll PyInit returned NULL — DaVinci IPC handshake rejected");
                 _logger.Error("→ Possible causes:");
-                _logger.Error("  1. Python 3.13+ incompatible (MOST COMMON)");
-                _logger.Error("     Fix: Install Python 3.11 and NumPy 2.2.3 (tested versions)");
-                _logger.Error("     Command: winget install Python.Python.3.11");
-                _logger.Error("  2. External scripting is DISABLED");
-                _logger.Error("     Fix: Preferences → General → External scripting using → Set to 'Local'");
-                _logger.Error("  3. Using DaVinci Resolve FREE (not Studio)");
-                _logger.Error("     Fix: Upgrade to Studio version (API only in paid version)");
-                _logger.Error("  4. DaVinci hasn't fully started yet");
-                _logger.Error("     Fix: Wait 10 seconds and check if it starts working");
+                _logger.Error("  1. External scripting is DISABLED (MOST COMMON)");
+                _logger.Error("     Fix: DaVinci Preferences → General → External scripting using → 'Local'");
+                _logger.Error("  2. Python build incompatibility (Python.org builds can fail; PyManager/Store Python works)");
+                _logger.Error("     Fix: Set DAVINCI_TRACKER_PYTHON=C:\\Program Files\\PyManager\\python.exe");
+                _logger.Error("     Tip: Check stderr — [resolve_api] lines show which Python was used");
+                _logger.Error("  3. DaVinci Resolve FREE (not Studio) — scripting API is Studio-only");
+                _logger.Error("  4. DaVinci hasn't fully initialized its scripting server yet");
+                _logger.Error("     Fix: Wait 10–15 seconds after Resolve opens");
                 return false;
             }
             else if (combinedLower.Contains("modulenotfounderror") || combinedLower.Contains("no module named"))
@@ -320,11 +320,11 @@ public class ResolveApiClient
                 if ((combinedLower.Contains("fusionscript") && combinedLower.Contains("initialization")) ||
                     (combinedLower.Contains("fusion") && combinedLower.Contains("failed")))
                 {
-                    _logger.Error("→ DaVinci Resolve Fusion script initialization failed");
-                    _logger.Error("→ DaVinci process is running but API cannot connect");
-                    _logger.Error("→ Most likely: Python 3.13+ incompatible - Install Python 3.11");
-                    _logger.Error("→ Or check: Preferences → General → External scripting → Set to 'Local'");
-                    _logger.Error("→ Or verify: You have DaVinci Resolve Studio (not free version)");
+                    _logger.Error("→ fusionscript.dll PyInit rejected — DaVinci IPC handshake failed");
+                    _logger.Error("→ Check stderr lines starting with [resolve_api] to see which Python is running");
+                    _logger.Error("→ Fix 1: DaVinci Preferences → General → External scripting using → 'Local'");
+                    _logger.Error("→ Fix 2: Python build issue — set DAVINCI_TRACKER_PYTHON=C:\\Program Files\\PyManager\\python.exe");
+                    _logger.Error("→ Fix 3: Confirm DaVinci Resolve Studio (not Free) — scripting is Studio-only");
                 }
                 else if (combinedLower.Contains("modulenotfounderror") || combinedLower.Contains("no module named"))
                 {

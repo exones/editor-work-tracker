@@ -46,7 +46,7 @@ $Version = Get-Date -Format "yyyyMMdd-HHmmss"
 Write-Info "Version: $Version"
 
 $ProjectPath = "src\DaVinciTimeTracker.App\DaVinciTimeTracker.App.csproj"
-$BuildOutputPath = "src\DaVinciTimeTracker.App\bin\Release\net9.0-windows"
+$BuildOutputPath = "src\DaVinciTimeTracker.App\bin\Release\net9.0-windows10.0.19041.0\publish"
 
 # Create output directory
 if (-not (Test-Path $OutputPath)) {
@@ -63,12 +63,12 @@ if (-not $SkipBuild) {
         Write-Info "Cleaning previous build..."
         dotnet clean $ProjectPath -c Release --nologo -v quiet
 
-        # Build
-        Write-Info "Building..."
-        $buildOutput = dotnet build $ProjectPath -c Release --nologo 2>&1
+        # Publish (not just build) — produces a clean, self-consistent output folder
+        Write-Info "Publishing..."
+        $buildOutput = dotnet publish $ProjectPath -c Release --nologo 2>&1
 
         if ($LASTEXITCODE -ne 0) {
-            Write-Fail "Build failed!"
+            Write-Fail "Publish failed!"
             Write-Host $buildOutput
             exit 1
         }

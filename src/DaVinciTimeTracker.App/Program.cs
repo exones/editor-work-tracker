@@ -143,7 +143,17 @@ try
     });
 
     // Initialize tracking services
-    var pythonPath = PythonPathResolver.FindPythonExecutable(Log.Logger);
+    var scriptPath = AppPaths.PythonScriptPath;
+    if (!File.Exists(scriptPath))
+    {
+        var errorMsg = $"Python script not found at: {scriptPath}";
+        Log.Fatal(errorMsg);
+        MessageBox.Show(errorMsg, "Script Not Found", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        return;
+    }
+
+    // Pass scriptPath so the resolver can test fusionscript compatibility when DaVinci is running
+    var pythonPath = PythonPathResolver.FindPythonExecutable(Log.Logger, scriptPath);
     if (pythonPath == null)
     {
         var errorMsg = "Python not found. Please install Python 3.8+ or set DAVINCI_TRACKER_PYTHON environment variable to python.exe path.";
@@ -157,15 +167,6 @@ try
         var errorMsg = $"Python installation at '{pythonPath}' is not valid.";
         Log.Fatal(errorMsg);
         MessageBox.Show(errorMsg, "Invalid Python Installation", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        return;
-    }
-
-    var scriptPath = AppPaths.PythonScriptPath;
-    if (!File.Exists(scriptPath))
-    {
-        var errorMsg = $"Python script not found at: {scriptPath}";
-        Log.Fatal(errorMsg);
-        MessageBox.Show(errorMsg, "Script Not Found", MessageBoxButtons.OK, MessageBoxIcon.Error);
         return;
     }
 
