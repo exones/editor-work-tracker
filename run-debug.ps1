@@ -53,5 +53,41 @@ Write-Host ""
 Write-Host "🚀 Starting app..." -ForegroundColor Green
 Write-Host ""
 
-# Run the app
-dotnet run --project src\DaVinciTimeTracker.App\DaVinciTimeTracker.App.csproj -c Debug --no-build
+# Launch the compiled exe in a new console window and tail the live log there
+$exePath  = Resolve-Path "src\DaVinciTimeTracker.App\bin\Debug\net9.0-windows10.0.19041.0\DaVinciTimeTracker.App.exe"
+$logDir   = "$env:LOCALAPPDATA\DaVinciTimeTracker\logs"
+$logGlob  = "$logDir\davinci-tracker-*.log"
+
+$script = @"
+`$host.UI.RawUI.WindowTitle = 'DaVinci Time Tracker — Debug'
+Write-Host '=== DaVinci Time Tracker — Debug ===' -ForegroundColor Cyan
+Write-Host '  Dashboard : http://localhost:5555'  -ForegroundColor Yellow
+Write-Host '  Ctrl+C    : stop the app'           -ForegroundColor Gray
+Write-Host ''
+
+`$proc = Start-Process -FilePath '$exePath' -PassThru
+Write-Host "App started (PID `$(`$proc.Id))" -ForegroundColor Green
+Write-Host ''
+
+# Wait for the log file to appear, then tail it with colour-coding
+`$deadline = (Get-Date).AddSeconds(10)
+while (-not (Get-ChildItem '$logGlob' -ErrorAction SilentlyContinue) -and (Get-Date) -lt `$deadline) {
+    Start-Sleep -Milliseconds 300
+}
+`$log = Get-ChildItem '$logGlob' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (`$log) {
+    Get-Content `$log.FullName -Wait | ForEach-Object {
+        if     (`$_ -match '\[ERR\]') { Write-Host `$_ -ForegroundColor Red     }
+        elseif (`$_ -match '\[WRN\]') { Write-Host `$_ -ForegroundColor Yellow  }
+        elseif (`$_ -match '\[DBG\]') { Write-Host `$_ -ForegroundColor DarkGray}
+        else                           { Write-Host `$_                           }
+    }
+} else {
+    Write-Host 'No log file found in $logDir' -ForegroundColor Red
+    `$proc.WaitForExit()
+}
+"@
+
+Start-Process pwsh -ArgumentList "-NoExit", "-Command", $script
+Write-Host "✓ Debug window opened — live logs streaming there" -ForegroundColor Green
+Write-Host "  Dashboard: http://localhost:5555" -ForegroundColor Cyan

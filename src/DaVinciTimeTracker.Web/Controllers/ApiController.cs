@@ -1,3 +1,4 @@
+using DaVinciTimeTracker.Core.NodeToggle;
 using DaVinciTimeTracker.Core.Services;
 using DaVinciTimeTracker.Data.Repositories;
 using Microsoft.AspNetCore.Mvc;
@@ -11,15 +12,18 @@ public class ApiController : ControllerBase
     private readonly SessionRepository _repository;
     private readonly StatisticsService _statisticsService;
     private readonly SessionManager _sessionManager;
+    private readonly NodeToggleService _nodeToggleService;
 
     public ApiController(
         SessionRepository repository,
         StatisticsService statisticsService,
-        SessionManager sessionManager)
+        SessionManager sessionManager,
+        NodeToggleService nodeToggleService)
     {
         _repository = repository;
         _statisticsService = statisticsService;
         _sessionManager = sessionManager;
+        _nodeToggleService = nodeToggleService;
     }
 
     [HttpGet("projects")]
@@ -71,6 +75,131 @@ public class ApiController : ControllerBase
         {
             var deletedCount = await _repository.DeleteProjectSessionsAsync(name);
             return Ok(new { success = true, deletedSessions = deletedCount, message = $"Deleted {deletedCount} session(s)" });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    // ── Node toggle endpoints ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns all nodes currently visible in DaVinci Resolve (active timeline / clip).
+    /// Used by the dashboard to populate node picker dropdowns.
+    /// Returns an empty array if Resolve is not running.
+    /// </summary>
+    [HttpGet("node-toggles/available-nodes")]
+    public async Task<IActionResult> GetAvailableNodes()
+    {
+        var nodes = await _nodeToggleService.GetAvailableNodesAsync();
+        return Ok(nodes);
+    }
+
+    [HttpGet("node-toggles")]
+    public IActionResult GetNodeToggles()
+    {
+        // Project to include runtime CurrentEnabled state (excluded from JSON config by [JsonIgnore])
+        var groups = _nodeToggleService.GetAllWithState();
+        return Ok(groups);
+    }
+
+    [HttpPost("node-toggles")]
+    public IActionResult CreateNodeToggle([FromBody] ToggleGroup group)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(group.Id))
+                group.Id = Guid.NewGuid().ToString("N")[..8];
+
+            var groups = _nodeToggleService.GetAll();
+            if (groups.Any(g => g.Id == group.Id))
+                return Conflict(new { success = false, message = $"Group id '{group.Id}' already exists." });
+
+            groups.Add(group);
+            _nodeToggleService.Save(groups);
+            return Ok(new { success = true, group });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { success = false, message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpPut("node-toggles/{id}")]
+    public IActionResult UpdateNodeToggle(string id, [FromBody] ToggleGroup group)
+    {
+        try
+        {
+            group.Id = id;
+            var groups = _nodeToggleService.GetAll();
+            var idx = groups.FindIndex(g => g.Id == id);
+            if (idx < 0)
+                return NotFound(new { success = false, message = $"Group '{id}' not found." });
+
+            groups[idx] = group;
+            _nodeToggleService.Save(groups);
+            return Ok(new { success = true, group });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { success = false, message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpDelete("node-toggles/{id}")]
+    public IActionResult DeleteNodeToggle(string id)
+    {
+        try
+        {
+            var groups = _nodeToggleService.GetAll();
+            var removed = groups.RemoveAll(g => g.Id == id);
+            if (removed == 0)
+                return NotFound(new { success = false, message = $"Group '{id}' not found." });
+
+            _nodeToggleService.Save(groups);
+            return Ok(new { success = true });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    /// <summary>Resets the in-process state assumption without touching DaVinci.</summary>
+    [HttpPost("node-toggles/{id}/reset-state")]
+    public IActionResult ResetNodeToggleState(string id, [FromQuery] bool assumeEnabled = true)
+    {
+        var group = _nodeToggleService.GetById(id);
+        if (group is null) return NotFound(new { success = false });
+        group.CurrentEnabled = assumeEnabled;
+        return Ok(new { success = true, currentEnabled = group.CurrentEnabled });
+    }
+
+    [HttpPost("node-toggles/{id}/execute")]
+    public async Task<IActionResult> ExecuteNodeToggle(string id, [FromQuery] string action = "toggle")
+    {
+        try
+        {
+            // "toggle" uses the stateful path (same as hotkey) so state is tracked correctly
+            // across Test presses and hotkey presses. GetNodeEnabled is not available in the
+            // DaVinci scripting API, so state must be tracked in-process.
+            var (success, enabled) = action is "on" or "off"
+                ? await _nodeToggleService.ExecuteByIdAsync(id, action)
+                : await _nodeToggleService.ExecuteByIdAsync(id);       // stateful toggle
+
+            if (success)
+                return Ok(new { success = true, enabled });
+
+            return Ok(new { success = false, message = "Toggle failed — check application logs for details." });
         }
         catch (Exception ex)
         {

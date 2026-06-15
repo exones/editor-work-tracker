@@ -1,6 +1,8 @@
 using DaVinciTimeTracker.App;
+using DaVinciTimeTracker.App.Hotkeys;
 using DaVinciTimeTracker.Core.Monitors;
 using DaVinciTimeTracker.Core.Models;
+using DaVinciTimeTracker.Core.NodeToggle;
 using DaVinciTimeTracker.Core.Resolve;
 using DaVinciTimeTracker.Core.Services;
 using DaVinciTimeTracker.Core.Utilities;
@@ -23,6 +25,9 @@ using System.Windows.Forms;
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Debug()
+    // Suppress ASP.NET Core / EF Core / Kestrel chatter — keep only warnings and above from Microsoft/System
+    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("System", Serilog.Events.LogEventLevel.Warning)
     .WriteTo.File(AppPaths.LogFilePath, rollingInterval: RollingInterval.Day, encoding: System.Text.Encoding.UTF8)
     .CreateLogger();
 
@@ -35,6 +40,19 @@ try
 {
     // Application setup
     ApplicationConfiguration.Initialize();
+
+    // All AppState singletons that the DI container resolves via factory lambdas must be set
+    // BEFORE the web server starts. If a request arrives before they're set the factory returns
+    // null and ASP.NET throws "Unable to resolve service" → 500 on every endpoint.
+
+    // SessionManager needs no Python — create immediately
+    var sessionManager = new SessionManager(Log.Logger);
+    AppState.SessionManager = sessionManager;
+
+    // NodeToggleService needs no Python at construction — Python path is set after detection
+    var nodeToggleService = new NodeToggleService(
+        "", "", AppPaths.NodeToggleConfigPath, Log.Logger);
+    AppState.NodeToggleService = nodeToggleService;
 
     // Register app for toast notifications
     ToastNotificationManagerCompat.OnActivated += toastArgs =>
@@ -49,11 +67,17 @@ try
     {
         var builder = WebApplication.CreateBuilder();
 
+        // Route ASP.NET Core framework logs (DI failures, 500 errors, middleware) into Serilog
+        builder.Host.UseSerilog(Log.Logger);
+
         // Set content root to application base directory for Windows Forms app
         builder.Environment.ContentRootPath = AppPaths.ApplicationDirectory;
         builder.Environment.WebRootPath = AppPaths.WwwRootPath;
 
         builder.Services.AddControllers()
+            .AddJsonOptions(opts =>
+                opts.JsonSerializerOptions.Converters.Add(
+                    new System.Text.Json.Serialization.JsonStringEnumConverter()))
             .AddApplicationPart(typeof(DaVinciTimeTracker.Web.Controllers.ApiController).Assembly);
         builder.Services.AddCors(options =>
         {
@@ -71,6 +95,7 @@ try
         builder.Services.AddScoped<SessionRepository>();
         builder.Services.AddSingleton<StatisticsService>();
         builder.Services.AddSingleton<SessionManager>(sp => AppState.SessionManager);
+        builder.Services.AddSingleton<NodeToggleService>(sp => AppState.NodeToggleService);
 
         builder.WebHost.UseUrls("http://localhost:5555");
 
@@ -176,11 +201,26 @@ try
     var resolveApiClient = new ResolveApiClient(pythonPath, scriptPath, Log.Logger);
     var resolveMonitor = new DaVinciResolveMonitor(resolveApiClient, Log.Logger);
     var activityMonitor = new ActivityMonitor(Log.Logger, checkIntervalMs: 5000, inactivityThresholdMinutes: 1);
-    var sessionManager = new SessionManager(Log.Logger);
+    // sessionManager was already created before the web server — reuse it
     var timeTrackingService = new TimeTrackingService(resolveMonitor, activityMonitor, sessionManager, Log.Logger);
 
+    // Now that Python is resolved, wire the correct executable into NodeToggleService
+    nodeToggleService.SetPythonExecutable(pythonPath, AppPaths.NodeToggleScriptPath);
+    var hotkeyManager = HotkeyManagerFactory.Create(Log.Logger);
+    hotkeyManager.Reload(nodeToggleService.GetAll());
+    nodeToggleService.ConfigChanged += groups => hotkeyManager.Reload(groups);
+    hotkeyManager.HotkeyTriggered += groupId =>
+    {
+        _ = Task.Run(async () =>
+        {
+            var (success, enabled) = await nodeToggleService.ExecuteByIdAsync(groupId);
+            if (!success)
+                Log.Warning("NodeToggle: hotkey for group {Id} failed", groupId);
+        });
+    };
+
     AppState.TimeTrackingService = timeTrackingService;
-    AppState.SessionManager = sessionManager;
+    // AppState.SessionManager and AppState.NodeToggleService were set before the web server started
     AppState.SessionRepository = new SessionRepository(
         new TimeTrackerDbContext(
             new DbContextOptionsBuilder<TimeTrackerDbContext>()
@@ -242,6 +282,8 @@ try
     periodicSaveTimer.Stop();
     periodicSaveTimer.Dispose();
     timeTrackingService.Dispose();
+    hotkeyManager.Dispose();
+    nodeToggleService.Dispose();
     Log.Information("DaVinci Time Tracker stopped");
 }
 catch (Exception ex)
@@ -259,4 +301,5 @@ public static class AppState
     public static TimeTrackingService TimeTrackingService { get; set; } = null!;
     public static SessionManager SessionManager { get; set; } = null!;
     public static SessionRepository SessionRepository { get; set; } = null!;
+    public static NodeToggleService NodeToggleService { get; set; } = null!;
 }

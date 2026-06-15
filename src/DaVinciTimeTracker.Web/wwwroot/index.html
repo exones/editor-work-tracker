@@ -16,18 +16,76 @@
                 </div>
             </header>
 
+            <nav class="tab-bar">
+                <button class="tab active" onclick="switchTab('projects', this)">📊 Projects</button>
+                <button class="tab" onclick="switchTab('toggles', this)">⌨️ Node Toggles</button>
+            </nav>
+
             <main>
+                <div id="tab-projects" class="tab-pane">
                 <div class="projects-list">
                     <h2>Projects</h2>
                     <div id="projects-container">
                         <p class="loading">Loading projects...</p>
                     </div>
                 </div>
+                </div>
+
+                <div id="tab-toggles" class="tab-pane" style="display:none">
+                <div class="node-toggles-section">
+                    <div class="section-header">
+                        <h2>Node Toggles</h2>
+                        <button class="btn btn-primary btn-sm" onclick="showToggleModal()">+ Add Group</button>
+                    </div>
+                    <p class="section-hint">
+                        Define groups of DaVinci Resolve nodes to toggle on/off with a global hotkey.
+                        Identify nodes by Node ID (stable) and/or title.
+                    </p>
+                    <div id="toggles-container">
+                        <p class="loading">Loading...</p>
+                    </div>
+                </div>
+                </div>
             </main>
 
             <footer>
                 <p>Auto-refreshing every 5 seconds</p>
             </footer>
+        </div>
+
+        <!-- Node Toggle Add/Edit Modal -->
+        <div id="toggle-modal" class="modal modal-wide">
+            <div class="modal-content">
+                <h2 id="toggle-modal-title">Add Toggle Group</h2>
+
+                <div class="form-group">
+                    <label>Group Name</label>
+                    <input type="text" id="toggle-name" placeholder="e.g. All Diagnostics" />
+                </div>
+
+                <div class="form-group">
+                    <label>Hotkey <span class="hint">(e.g. Ctrl+Alt+D, Shift+F5)</span></label>
+                    <input type="text" id="toggle-hotkey" placeholder="Ctrl+Alt+D" />
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        Nodes
+                        <button class="btn btn-sm btn-load-nodes" id="load-nodes-btn" onclick="loadNodesFromDaVinci()" title="Load live node list from DaVinci Resolve">
+                            ⟳ Load from DaVinci
+                        </button>
+                        <span id="nodes-loaded-hint" class="nodes-loaded-hint" style="display:none"></span>
+                    </label>
+                    <div id="toggle-nodes-list"></div>
+                    <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="addNodeRow()">+ Add node</button>
+                    <p class="field-hint">Load from DaVinci to get a dropdown of live nodes per level. Or type a Node ID / Title manually (Node ID is more stable).</p>
+                </div>
+
+                <div class="modal-buttons">
+                    <button id="toggle-save-btn" class="btn btn-primary" onclick="saveToggleGroup()">Save</button>
+                    <button class="btn btn-secondary" onclick="hideToggleModal()">Cancel</button>
+                </div>
+            </div>
         </div>
 
         <!-- Delete Confirmation Modal -->

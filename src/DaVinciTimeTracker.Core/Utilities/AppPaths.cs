@@ -82,4 +82,14 @@ public static class AppPaths
     /// Gets the path to the wwwroot directory
     /// </summary>
     public static string WwwRootPath => Path.Combine(ApplicationDirectory, "wwwroot");
+
+    /// <summary>
+    /// Gets the path to the node toggle Python script (deployed next to the exe)
+    /// </summary>
+    public static string NodeToggleScriptPath => Path.Combine(ApplicationDirectory, "node_toggle_api.py");
+
+    /// <summary>
+    /// Gets the path to the node toggle JSON config file (user data directory, persists across updates)
+    /// </summary>
+    public static string NodeToggleConfigPath => Path.Combine(UserDataDirectory, "node-toggles.json");
 }

@@ -75,6 +75,38 @@ header h1 {
   }
 }
 
+/* Tab navigation */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  background: #f1f5f9;
+  border-bottom: 2px solid #e2e8f0;
+  padding: 0 30px;
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  padding: 14px 22px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: -2px;
+}
+
+.tab:hover {
+  color: #334155;
+  background: rgba(102, 126, 234, 0.06);
+}
+
+.tab.active {
+  color: #667eea;
+  border-bottom-color: #667eea;
+}
+
 main {
   padding: 30px;
 }
@@ -384,6 +416,343 @@ footer {
 
 .btn-secondary:hover {
   background: #cbd5e1;
+}
+
+/* ── Node Toggles Section ─────────────────────────────────────────── */
+
+.node-toggles-section {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.section-header h2 {
+  color: #1e293b;
+}
+
+.section-hint {
+  color: #64748b;
+  font-size: 0.875rem;
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.toggle-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 12px;
+  transition: box-shadow 0.2s ease;
+}
+
+.toggle-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.toggle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.toggle-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.toggle-name {
+  font-weight: 600;
+  color: #1e293b;
+  font-size: 1rem;
+}
+
+.hotkey-badge {
+  background: #1e293b;
+  color: #e2e8f0;
+  font-family: monospace;
+  font-size: 0.8rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.toggle-state {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+}
+
+.toggle-state.on  { background: #dcfce7; color: #166534; }
+.toggle-state.off { background: #fee2e2; color: #991b1b; }
+.toggle-state.unknown { background: #f1f5f9; color: #64748b; }
+
+.toggle-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toggle-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.node-chip {
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 0.8rem;
+  padding: 3px 10px;
+  border-radius: 12px;
+  display: inline-block;
+}
+
+.node-chip em {
+  color: #64748b;
+  font-style: normal;
+  font-size: 0.75rem;
+}
+
+.muted { color: #94a3b8; font-size: 0.85rem; }
+
+/* Buttons */
+.btn-primary {
+  background: #667eea;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #4f63d2;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.btn-sm {
+  padding: 6px 14px;
+  font-size: 0.85rem;
+}
+
+.btn-test {
+  background: #10b981;
+  color: white;
+}
+
+.btn-test:hover {
+  background: #059669;
+  transform: translateY(-1px);
+}
+
+.btn-sync {
+  background: #64748b;
+  color: white;
+  font-size: 0.78rem;
+}
+
+.btn-sync:hover {
+  background: #475569;
+  transform: translateY(-1px);
+}
+
+/* Add/Edit Modal */
+.modal-wide .modal-content {
+  max-width: 680px;
+}
+
+.form-group {
+  margin-bottom: 18px;
+}
+
+.form-group label {
+  display: block;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 6px;
+  font-size: 0.9rem;
+}
+
+.form-group label .hint {
+  font-weight: 400;
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"] {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus {
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+/* Manual mode: [level] [id] [title] [x] */
+.node-row {
+  display: grid;
+  grid-template-columns: 110px 80px 1fr 32px;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+/* Picker mode: [level] [node select] [x] */
+.node-row:has(.node-picker-select) {
+  grid-template-columns: 110px 1fr 32px;
+}
+
+.node-row input,
+.node-row select {
+  padding: 7px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.node-row input:focus,
+.node-row select:focus {
+  border-color: #667eea;
+}
+
+.node-row .btn-delete {
+  font-size: 1rem;
+  padding: 4px 8px;
+}
+
+.field-hint {
+  color: #64748b;
+  font-size: 0.8rem;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.nodes-loaded-hint {
+  margin-left: 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #10b981;
+  vertical-align: middle;
+}
+
+/* Load-from-DaVinci button inline with label */
+.btn-load-nodes {
+  margin-left: 10px;
+  background: #0ea5e9;
+  color: white;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+.btn-load-nodes:hover {
+  background: #0284c7;
+}
+
+.btn-load-nodes:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Node picker panel */
+.node-picker {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.node-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.node-picker-title {
+  font-size: 0.8rem;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.node-picker-header select {
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  background: white;
+}
+
+.picker-level-group {
+  margin-bottom: 8px;
+}
+
+.picker-level-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.node-chip-btn {
+  background: white;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  padding: 4px 12px;
+  margin: 3px 3px 3px 0;
+  font-size: 0.8rem;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.node-chip-btn:hover {
+  background: #667eea;
+  border-color: #667eea;
+  color: white;
+  transform: translateY(-1px);
+}
+
+.node-chip-btn.chip-disabled {
+  opacity: 0.5;
+  font-style: italic;
+}
+
+.chip-id {
+  font-family: monospace;
+  font-size: 0.72rem;
+  background: #e2e8f0;
+  border-radius: 4px;
+  padding: 1px 4px;
+  color: #475569;
+}
+
+.node-chip-btn:hover .chip-id {
+  background: rgba(255,255,255,0.25);
+  color: white;
 }
 
 /* Notification */

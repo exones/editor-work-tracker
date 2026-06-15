@@ -1,10 +1,32 @@
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Text;
 
 namespace DaVinciTimeTracker.Core.Native;
 
 public static class WindowsApi
 {
+    // ── Global hotkey registration ────────────────────────────────────────────
+    // Used by WindowsHotkeyManager.
+    // If TFM ever changes from net9.0-windows* to net9.0, add #if WINDOWS guards here.
+
+    [SupportedOSPlatform("windows")]
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [SupportedOSPlatform("windows")]
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    public const uint MOD_ALT     = 0x0001;
+    public const uint MOD_CONTROL = 0x0002;
+    public const uint MOD_SHIFT   = 0x0004;
+    public const uint MOD_WIN     = 0x0008;
+    /// <summary>MOD_NOREPEAT: suppress auto-repeat WM_HOTKEY messages while key is held.</summary>
+    public const uint MOD_NOREPEAT = 0x4000;
+
+    // ── Idle / foreground window detection ────────────────────────────────────
+
     [DllImport("user32.dll")]
     public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
 
