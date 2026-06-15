@@ -1,203 +1,97 @@
 using Serilog;
-using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace DaVinciTimeTracker.Core.NodeToggle;
 
-public class NodeToggleApiClient
+/// <summary>
+/// Thin protocol layer over PythonDaemon.
+/// Knows the DaVinci node-toggle command format; delegates all process
+/// management (start, restart, health) to PythonDaemon.
+/// </summary>
+public sealed class NodeToggleApiClient : IDisposable
 {
-    private string _pythonPath;
-    private string _scriptPath;
+    private readonly PythonDaemon _daemon;
     private readonly ILogger _logger;
 
-    public NodeToggleApiClient(string pythonPath, string scriptPath, ILogger logger)
+    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+
+    public NodeToggleApiClient(ILogger logger)
     {
-        _pythonPath = pythonPath;
-        _scriptPath = scriptPath;
+        _daemon = new PythonDaemon(logger);
         _logger = logger;
     }
 
-    /// <summary>Updates the Python executable path after it has been resolved post-startup.</summary>
-    public void SetPythonExecutable(string pythonPath, string scriptPath)
-    {
-        _pythonPath = pythonPath;
-        _scriptPath = scriptPath;
-        _logger.Information("NodeToggle: Python executable set → {Python}", pythonPath);
-    }
+    public void SetPythonExecutable(string pythonPath, string scriptPath) =>
+        _daemon.Configure(pythonPath, scriptPath);
 
-    /// <summary>
-    /// Executes a toggle for the given nodes.
-    /// Returns (success, enabled) where enabled = true if nodes are now enabled.
-    /// Returns (false, null) on failure.
-    /// </summary>
-    public async Task<(bool Success, bool? Enabled)> ExecuteToggleAsync(
-        IEnumerable<NodeTarget> nodes,
-        string action = "toggle")
-    {
-        var payload = new
-        {
-            nodes = nodes.Select(n => new
-            {
-                nodeId = n.NodeId,
-                title = n.Title,
-                level = n.Level.ToString()
-            }),
-            state = action
-        };
+    // ── Commands ──────────────────────────────────────────────────────────────
 
-        var json = JsonSerializer.Serialize(payload);
-        _logger.Information("NodeToggle: spawning Python — action={Action}, nodes={Count}, python={Python}",
-            action, payload.nodes.Count(), _pythonPath);
-
-        if (string.IsNullOrEmpty(_pythonPath))
-        {
-            _logger.Warning("NodeToggle: Python path is not set — call SetPythonExecutable first");
-            return (false, null);
-        }
-        if (!File.Exists(_scriptPath))
-        {
-            _logger.Warning("NodeToggle: script not found at {Script}", _scriptPath);
-            return (false, null);
-        }
-
-        try
-        {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = _pythonPath,
-                    Arguments = $"\"{_scriptPath}\" {EscapeArgument(json)}",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8
-                }
-            };
-
-            process.Start();
-            var stdout = await process.StandardOutput.ReadToEndAsync();
-            var stderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            stdout = stdout.Trim();
-
-            // Always log stderr — it contains [node_toggle_api] diagnostic lines
-            if (!string.IsNullOrWhiteSpace(stderr))
-                _logger.Information("NodeToggle stderr:\n{Stderr}", stderr.Trim());
-
-            if (process.ExitCode == 0 && stdout.StartsWith("OK:"))
-            {
-                var enabled = stdout == "OK:enabled";
-                _logger.Information("NodeToggle: {Action} → {State}", action, stdout);
-                return (true, enabled);
-            }
-
-            _logger.Warning("NodeToggle: FAILED (exit={Code}) stdout={Stdout}", process.ExitCode, stdout);
-            LogActionableHint(stdout);
-            return (false, null);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "NodeToggleApiClient: exception executing toggle");
-            return (false, null);
-        }
-    }
-
-    /// <summary>
-    /// Queries DaVinci Resolve for all nodes currently visible across all graph levels
-    /// (Timeline, Clip, PreClip, PostClip) for the active clip/timeline.
-    /// Returns an empty list if Resolve is not running or no project is open.
-    /// </summary>
     public async Task<List<AvailableNode>> GetAvailableNodesAsync()
     {
-        _logger.Information("NodeToggle: listing available nodes — python={Python}, script={Script}",
-            _pythonPath, _scriptPath);
+        _logger.Information("NodeToggle: requesting node list from DaVinci");
+        var cmd = JsonSerializer.Serialize(new { action = "list" });
+        var resp = await _daemon.SendAsync(cmd);
 
-        if (string.IsNullOrEmpty(_pythonPath))
+        if (resp?["status"]?.GetValue<string>() == "ok")
         {
-            _logger.Warning("NodeToggle: Python path is not set — cannot list nodes");
-            return [];
-        }
-        if (!File.Exists(_scriptPath))
-        {
-            _logger.Warning("NodeToggle: script not found at {Script}", _scriptPath);
-            return [];
+            var nodes = resp["nodes"]?.Deserialize<List<AvailableNode>>(JsonOpts) ?? [];
+            _logger.Information("NodeToggle: received {Count} nodes", nodes.Count);
+            return nodes;
         }
 
-        var payload = JsonSerializer.Serialize(new { nodes = Array.Empty<object>(), state = "list" });
-        try
-        {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = _pythonPath,
-                    Arguments = $"\"{_scriptPath}\" {EscapeArgument(payload)}",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8
-                }
-            };
-
-            process.Start();
-            var stdout = await process.StandardOutput.ReadToEndAsync();
-            var stderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            stdout = stdout.Trim();
-
-            if (!string.IsNullOrWhiteSpace(stderr))
-                _logger.Information("NodeToggle list stderr:\n{Stderr}", stderr.Trim());
-
-            if (stdout.StartsWith("NODES:"))
-            {
-                var json = stdout["NODES:".Length..];
-                var nodes = JsonSerializer.Deserialize<List<AvailableNode>>(json, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                }) ?? [];
-                _logger.Information("NodeToggle: listed {Count} nodes", nodes.Count);
-                return nodes;
-            }
-
-            _logger.Warning("NodeToggle list: unexpected output (exit={Code}): {Out}", process.ExitCode, stdout);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "NodeToggleApiClient: exception listing available nodes");
-        }
-
+        _logger.Warning("NodeToggle list failed: {Msg}", resp?["message"]?.GetValue<string>());
         return [];
     }
 
-    private void LogActionableHint(string stdout)
+    public async Task<(bool Success, bool? Enabled)> ExecuteToggleAsync(
+        IEnumerable<NodeTarget> nodes, string action)
     {
-        if (stdout.Contains("resolve_not_running"))
-            _logger.Warning("  → DaVinci Resolve is not running — open Resolve first");
-        else if (stdout.Contains("no_project"))
-            _logger.Warning("  → No project is open in DaVinci Resolve");
-        else if (stdout.Contains("no_timeline"))
-            _logger.Warning("  → No timeline is active in DaVinci Resolve");
-        else if (stdout.Contains("not_found") || stdout.Contains("all_nodes_failed"))
-            _logger.Warning("  → One or more nodes were not found — check node IDs/titles in config");
-        else if (stdout.Contains("modules_not_found"))
-            _logger.Warning("  → DaVinci Resolve scripting modules not found — is DaVinci Studio installed?");
-        else if (stdout.Contains("fusionscript"))
-            _logger.Warning("  → fusionscript IPC failure — see Python resolver logs");
+        var nodeList = nodes.ToList();
+        _logger.Information("NodeToggle: {Action} × {Count} node(s)", action, nodeList.Count);
+
+        var cmd = JsonSerializer.Serialize(new
+        {
+            action,
+            nodes = nodeList.Select(n => new
+            {
+                nodeId = n.NodeId,
+                title  = n.Title,
+                level  = n.Level.ToString()
+            })
+        });
+
+        var resp = await _daemon.SendAsync(cmd);
+
+        if (resp?["status"]?.GetValue<string>() == "ok")
+        {
+            var enabled = resp["enabled"]?.GetValue<bool>();
+            _logger.Information("NodeToggle: {Action} → {State}",
+                action, enabled == true ? "enabled" : "disabled");
+            return (true, enabled);
+        }
+
+        var msg = resp?["message"]?.GetValue<string>() ?? "(no response)";
+        _logger.Warning("NodeToggle: {Action} failed — {Msg}", action, msg);
+        LogActionableHint(msg);
+        return (false, null);
     }
 
-    /// <summary>Escapes a string for use as a command-line argument (wraps in quotes, escapes internal quotes).</summary>
-    private static string EscapeArgument(string arg)
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private void LogActionableHint(string msg)
     {
-        // Escape backslashes before quotes, then wrap in double quotes
-        arg = arg.Replace("\\", "\\\\").Replace("\"", "\\\"");
-        return $"\"{arg}\"";
+        if (msg.Contains("resolve_not_running"))
+            _logger.Warning("  → DaVinci Resolve is not running");
+        else if (msg.Contains("no_project"))
+            _logger.Warning("  → No project open in DaVinci Resolve");
+        else if (msg.Contains("not_found") || msg.Contains("all_nodes_failed"))
+            _logger.Warning("  → Node(s) not found — check IDs/titles in config");
+        else if (msg.Contains("modules_not_found"))
+            _logger.Warning("  → DaVinci Resolve scripting modules not found");
+        else if (msg.Contains("fusionscript"))
+            _logger.Warning("  → fusionscript IPC failure — check Python compatibility");
     }
+
+    public void Dispose() => _daemon.Dispose();
 }

@@ -17,6 +17,8 @@ public class NodeToggleService : IDisposable
     private FileSystemWatcher? _watcher;
     private System.Timers.Timer? _debounceTimer;
     private readonly SemaphoreSlim _fileLock = new(1, 1);
+    // Per-group execution locks: rapid hotkey presses are dropped while one is in flight
+    private readonly Dictionary<string, SemaphoreSlim> _groupLocks = new();
     private bool _disposed;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -31,7 +33,9 @@ public class NodeToggleService : IDisposable
 
     public NodeToggleService(string pythonPath, string scriptPath, string configPath, ILogger logger)
     {
-        _apiClient = new NodeToggleApiClient(pythonPath, scriptPath, logger);
+        _apiClient = new NodeToggleApiClient(logger);
+        if (!string.IsNullOrEmpty(pythonPath))
+            _apiClient.SetPythonExecutable(pythonPath, scriptPath);
         _configPath = configPath;
         _logger = logger;
 
@@ -80,11 +84,18 @@ public class NodeToggleService : IDisposable
         ConfigChanged?.Invoke(GetAll());
     }
 
+    private SemaphoreSlim GetGroupLock(string id)
+    {
+        if (!_groupLocks.TryGetValue(id, out var sem))
+            _groupLocks[id] = sem = new SemaphoreSlim(1, 1);
+        return sem;
+    }
+
     /// <summary>
     /// Execute a toggle for the group with the given id.
-    /// Sends an explicit "on"/"off" action based on tracked state so the Python
-    /// script doesn't need to read GetNodeEnabled (unavailable in this API version).
-    /// Returns (success, enabled?) — enabled is null when unknown.
+    /// Sends an explicit "on"/"off" based on tracked state (GetNodeEnabled is unavailable in
+    /// the DaVinci scripting API). Rapid calls are dropped while one execution is in flight
+    /// to prevent concurrent Python processes from cancelling each other out.
     /// </summary>
     public async Task<(bool Success, bool? Enabled)> ExecuteByIdAsync(string id)
     {
@@ -101,18 +112,31 @@ public class NodeToggleService : IDisposable
             return (false, null);
         }
 
-        // Determine target: flip known state, or disable on first press (assume enabled by default)
-        var targetEnabled = group.CurrentEnabled.HasValue ? !group.CurrentEnabled.Value : false;
-        var action = targetEnabled ? "on" : "off";
+        var sem = GetGroupLock(id);
+        if (!sem.Wait(0)) // non-blocking: drop if already executing
+        {
+            _logger.Debug("NodeToggle: '{Name}' is busy — dropping rapid hotkey press", group.Name);
+            return (false, null);
+        }
 
-        _logger.Information("NodeToggle: executing '{Name}' → {Action} ({Count} node(s))",
-            group.Name, action, group.Nodes.Count);
+        try
+        {
+            var targetEnabled = group.CurrentEnabled.HasValue ? !group.CurrentEnabled.Value : false;
+            var action = targetEnabled ? "on" : "off";
 
-        var (success, enabled) = await _apiClient.ExecuteToggleAsync(group.Nodes, action);
-        if (success)
-            group.CurrentEnabled = enabled;
+            _logger.Information("NodeToggle: executing '{Name}' → {Action} ({Count} node(s))",
+                group.Name, action, group.Nodes.Count);
 
-        return (success, enabled);
+            var (success, enabled) = await _apiClient.ExecuteToggleAsync(group.Nodes, action);
+            if (success)
+                group.CurrentEnabled = enabled;
+
+            return (success, enabled);
+        }
+        finally
+        {
+            sem.Release();
+        }
     }
 
     /// <summary>
@@ -129,19 +153,30 @@ public class NodeToggleService : IDisposable
     public Task<List<AvailableNode>> GetAvailableNodesAsync() =>
         _apiClient.GetAvailableNodesAsync();
 
-    /// <summary>
-    /// Execute a specific action ("toggle", "on", "off") for the group.
-    /// </summary>
+    /// <summary>Execute an explicit "on" or "off" action for the group (used by Test button).</summary>
     public async Task<(bool Success, bool? Enabled)> ExecuteByIdAsync(string id, string action)
     {
         var group = GetById(id);
         if (group is null) return (false, null);
+        if (!group.Nodes.Any()) return (false, null);
 
-        var (success, enabled) = await _apiClient.ExecuteToggleAsync(group.Nodes, action);
-        if (success)
-            group.CurrentEnabled = enabled;
-
-        return (success, enabled);
+        var sem = GetGroupLock(id);
+        if (!sem.Wait(0))
+        {
+            _logger.Debug("NodeToggle: '{Name}' is busy — dropping request", group.Name);
+            return (false, null);
+        }
+        try
+        {
+            var (success, enabled) = await _apiClient.ExecuteToggleAsync(group.Nodes, action);
+            if (success)
+                group.CurrentEnabled = enabled;
+            return (success, enabled);
+        }
+        finally
+        {
+            sem.Release();
+        }
     }
 
     // ── Config file I/O ───────────────────────────────────────────────────────
@@ -231,5 +266,7 @@ public class NodeToggleService : IDisposable
         _watcher?.Dispose();
         _debounceTimer?.Dispose();
         _fileLock.Dispose();
+        foreach (var sem in _groupLocks.Values) sem.Dispose();
+        _groupLocks.Clear();
     }
 }
