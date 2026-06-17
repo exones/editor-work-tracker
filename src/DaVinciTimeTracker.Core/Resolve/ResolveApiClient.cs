@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json.Nodes;
 using Serilog;
 
 namespace DaVinciTimeTracker.Core.Resolve;
@@ -213,11 +214,12 @@ public class ResolveApiClient
     }
 
     /// <summary>
-    /// Returns the current project name and active page from DaVinci Resolve.
-    /// Output format from resolve_api.py: "ProjectName|page" (e.g. "2026-POWERGRADE|color").
-    /// Returns (null, null) when no project is open or on error.
+    /// Returns the current resolve status from DaVinci Resolve.
+    /// Output format from resolve_api.py: "ProjectName|page|timeline|isRendering"
+    /// e.g. "2026-POWERGRADE|color|ONLINE_GRADE|false"
+    /// Returns all-null/false when no project is open or on error.
     /// </summary>
-    public async Task<(string? ProjectName, string? Page)> GetCurrentProjectNameAsync()
+    public async Task<ResolveStatus> GetCurrentProjectNameAsync()
     {
         try
         {
@@ -245,29 +247,42 @@ public class ResolveApiClient
             {
                 var rawOutput = output.Trim();
 
-                // Parse "ProjectName|page" format
-                var parts = rawOutput.Split('|', 2);
-                var projectName = parts[0].Trim();
-                var page = parts.Length > 1 ? parts[1].Trim() : null;
-
-                // Treat "Untitled Project" as no project open
-                if (projectName.Equals("Untitled Project", StringComparison.OrdinalIgnoreCase))
+                // Parse JSON response: {"project":"...","page":"...","timeline":"...","rendering":false}
+                try
                 {
-                    _logger.Debug("DaVinci opened without project (Untitled Project)");
+                    var node        = JsonNode.Parse(rawOutput);
+                    var projectName = node?["project"]?.GetValue<string>();
+                    var page        = node?["page"]?.GetValue<string>();
+                    var timeline    = node?["timeline"]?.GetValue<string>();
+                    var isRendering = node?["rendering"]?.GetValue<bool>() ?? false;
+
+                    // Empty/null strings from JSON → null
+                    if (string.IsNullOrEmpty(page))     page     = null;
+                    if (string.IsNullOrEmpty(timeline))  timeline = null;
+
+                    // Treat "Untitled Project" as no project open
+                    if (string.IsNullOrEmpty(projectName) ||
+                        projectName.Equals("Untitled Project", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.Debug("DaVinci opened without project (Untitled Project)");
+                        _consecutiveErrors = 0;
+                        _lastErrorMessage  = null;
+                        return ResolveStatus.Empty;
+                    }
+
+                    _logger.Debug("DaVinci: project={Project} page={Page} timeline={Timeline} rendering={Rendering}",
+                        projectName, page, timeline, isRendering);
+
                     _consecutiveErrors = 0;
-                    _lastErrorMessage = null;
-                    return (null, null);
+                    _lastErrorMessage  = null;
+
+                    return new ResolveStatus(projectName, page, timeline, isRendering);
                 }
-
-                if (page != null)
-                    _logger.Debug("DaVinci project detected: {ProjectName} (page: {Page})", projectName, page);
-                else
-                    _logger.Debug("DaVinci project detected: {ProjectName}", projectName);
-
-                _consecutiveErrors = 0;
-                _lastErrorMessage = null;
-
-                return (projectName, page);
+                catch (Exception ex)
+                {
+                    _logger.Warning("Failed to parse resolve_api.py JSON output: {Output} — {Error}",
+                        rawOutput, ex.Message);
+                }
             }
 
             if (output.Contains("NO_PROJECT"))
@@ -275,7 +290,7 @@ public class ResolveApiClient
                 _logger.Debug("No DaVinci project currently open");
                 _consecutiveErrors = 0;
                 _lastErrorMessage = null;
-                return (null, null);
+                return ResolveStatus.Empty;
             }
 
             // Detailed error logging with debouncing (avoid spam)
@@ -352,14 +367,24 @@ public class ResolveApiClient
                 }
             }
 
-            return (null, null);
+            return ResolveStatus.Empty;
         }
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to execute DaVinci API script:");
             _logger.Error("  Python: {PythonPath}", _pythonPath);
             _logger.Error("  Script: {ScriptPath}", _scriptPath);
-            return (null, null);
+            return ResolveStatus.Empty;
         }
     }
+}
+
+/// <summary>Parsed output from resolve_api.py — one poll result.</summary>
+public record ResolveStatus(
+    string? ProjectName,
+    string? Page,
+    string? Timeline,
+    bool    IsRendering)
+{
+    public static readonly ResolveStatus Empty = new(null, null, null, false);
 }

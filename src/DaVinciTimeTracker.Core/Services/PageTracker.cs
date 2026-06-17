@@ -5,17 +5,19 @@ using Serilog;
 namespace DaVinciTimeTracker.Core.Services;
 
 /// <summary>
-/// Tracks how long the user spends on each DaVinci Resolve page within a session.
+/// Tracks how long the user spends on each DaVinci Resolve page + timeline within a session,
+/// and tags segments where DaVinci is actively rendering.
 ///
-/// Lifecycle:
-///   - SessionStarted  → opens the first PageTimeEntry for the current page
-///   - PageChanged     → closes the current entry, opens a new one
-///   - SessionEnded    → closes the current entry
+/// Rotation triggers (close current entry, open new one):
+///   - Page changes      (PageChanged event)
+///   - Timeline changes  (TimelineChanged event)
+///   - Render starts     (RenderingStarted — same page/timeline, IsRendering = true)
+///   - Render stops      (RenderingStopped — same page/timeline, IsRendering = false)
+///   - Session ends      (SessionEnded)
 ///
-/// Only active while a session is running (Tracking / GraceEnd states).
-/// GraceStart is excluded because SessionStarted hasn't fired yet.
-///
-/// FlushedEnd is updated by the caller (Program.cs periodic timer) for crash recovery.
+/// Deferred start: if GetCurrentPage() returns null at session start (DaVinci in background),
+/// the first entry is held back until the first real page is detected and then opened
+/// retroactively from the session StartTime.
 /// </summary>
 public sealed class PageTracker : IDisposable
 {
@@ -27,20 +29,23 @@ public sealed class PageTracker : IDisposable
     private ProjectSession? _pendingSession; // session waiting for first non-null page
     private bool _disposed;
 
-    /// <summary>Fired when a page segment ends (page switch or session end). Caller persists the entry.</summary>
+    /// <summary>Fired when a segment ends. Caller persists the entry.</summary>
     public event Func<PageTimeEntry, Task>? PageSegmentEnded;
 
     public PageTimeEntry? CurrentEntry => _currentEntry;
 
     public PageTracker(DaVinciResolveMonitor monitor, SessionManager sessionManager, ILogger logger)
     {
-        _monitor   = monitor;
+        _monitor        = monitor;
         _sessionManager = sessionManager;
-        _logger    = logger;
+        _logger         = logger;
 
-        _sessionManager.SessionStarted += OnSessionStarted;
-        _sessionManager.SessionEnded   += OnSessionEnded;
-        _monitor.PageChanged           += OnPageChanged;
+        _sessionManager.SessionStarted  += OnSessionStarted;
+        _sessionManager.SessionEnded    += OnSessionEnded;
+        _monitor.PageChanged            += OnPageChanged;
+        _monitor.TimelineChanged        += OnTimelineChanged;
+        _monitor.RenderingStarted       += OnRenderingStarted;
+        _monitor.RenderingStopped       += OnRenderingStopped;
     }
 
     // ── Event handlers ────────────────────────────────────────────────────────
@@ -50,13 +55,13 @@ public sealed class PageTracker : IDisposable
         var page = _monitor.CurrentPage;
         if (page != null)
         {
-            _logger.Information("PageTracker: session started — opening entry for page '{Page}'", page);
             _pendingSession = null;
-            OpenEntry(session, page);
+            _logger.Information("PageTracker: session started — page '{Page}' timeline '{Timeline}'",
+                page, _monitor.CurrentTimeline);
+            OpenEntry(session, page, _monitor.CurrentTimeline, _monitor.IsRendering);
         }
         else
         {
-            // GetCurrentPage() returns null when DaVinci is minimised/background — wait for first real page
             _logger.Information("PageTracker: session started, page unknown (DaVinci in background) — deferring first entry");
             _pendingSession = session;
         }
@@ -71,49 +76,106 @@ public sealed class PageTracker : IDisposable
 
     private void OnPageChanged(object? sender, string newPage)
     {
-        // If we were waiting for the first page after session start, open retroactively
-        if (_pendingSession is not null)
-        {
-            _logger.Information("PageTracker: first page '{Page}' detected — opening deferred entry from session start", newPage);
-            var session = _pendingSession;
-            _pendingSession = null;
-            // StartTime retroactive to session start so total adds up correctly
-            _currentEntry = new PageTimeEntry
-            {
-                Id          = Guid.NewGuid(),
-                SessionId   = session.Id,
-                ProjectName = session.ProjectName,
-                UserName    = session.UserName,
-                Page        = newPage,
-                StartTime   = session.StartTime // retroactive
-            };
-            return;
-        }
-
-        if (_currentEntry is null) return; // no active session
+        if (TryResolvePending(newPage)) return;
+        if (_currentEntry is null) return;
 
         _logger.Debug("PageTracker: page changed to '{Page}' — rotating entry", newPage);
         CloseCurrentEntry();
 
-        var activeSession = _sessionManager.GetCurrentSession();
-        if (activeSession is not null)
-            OpenEntry(activeSession, newPage);
+        var s = _sessionManager.GetCurrentSession();
+        if (s is not null)
+            OpenEntry(s, newPage, _monitor.CurrentTimeline, _monitor.IsRendering);
+    }
+
+    private void OnTimelineChanged(object? sender, string newTimeline)
+    {
+        if (_currentEntry is null && _pendingSession is null) return;
+
+        // If still waiting for first page, timeline alone doesn't trigger an entry yet
+        if (_currentEntry is null) return;
+
+        _logger.Debug("PageTracker: timeline changed to '{Timeline}' — rotating entry", newTimeline);
+        CloseCurrentEntry();
+
+        var s = _sessionManager.GetCurrentSession();
+        if (s is not null)
+            OpenEntry(s, _monitor.CurrentPage ?? _currentEntry?.Page ?? "unknown", newTimeline, _monitor.IsRendering);
+    }
+
+    private void OnRenderingStarted(object? sender, EventArgs e)
+    {
+        if (_currentEntry is null) return;
+
+        _logger.Information("PageTracker: rendering started on page '{Page}' — rotating to render entry",
+            _currentEntry.Page);
+        var page     = _currentEntry.Page;
+        var timeline = _currentEntry.TimelineName;
+        CloseCurrentEntry();
+
+        var s = _sessionManager.GetCurrentSession();
+        if (s is not null)
+            OpenEntry(s, page, timeline, isRendering: true);
+    }
+
+    private void OnRenderingStopped(object? sender, EventArgs e)
+    {
+        if (_currentEntry is null) return;
+
+        _logger.Information("PageTracker: rendering stopped — rotating back to active entry");
+        var page     = _currentEntry.Page;
+        var timeline = _currentEntry.TimelineName;
+        CloseCurrentEntry();
+
+        var s = _sessionManager.GetCurrentSession();
+        if (s is not null)
+            OpenEntry(s, page, timeline, isRendering: false);
+    }
+
+    // ── Deferred-start helper ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// If a session is pending its first page detection, open the entry retroactively
+    /// from session start time and return true. Caller should early-return after this.
+    /// </summary>
+    private bool TryResolvePending(string newPage)
+    {
+        if (_pendingSession is null) return false;
+
+        _logger.Information("PageTracker: first page '{Page}' detected — opening deferred entry from session start", newPage);
+        var session = _pendingSession;
+        _pendingSession = null;
+
+        _currentEntry = new PageTimeEntry
+        {
+            Id           = Guid.NewGuid(),
+            SessionId    = session.Id,
+            ProjectName  = session.ProjectName,
+            UserName     = session.UserName,
+            Page         = newPage,
+            TimelineName = _monitor.CurrentTimeline,
+            IsRendering  = _monitor.IsRendering,
+            StartTime    = session.StartTime  // retroactive to session start
+        };
+        return true;
     }
 
     // ── Entry management ──────────────────────────────────────────────────────
 
-    private void OpenEntry(ProjectSession session, string page)
+    private void OpenEntry(ProjectSession session, string page, string? timeline, bool isRendering)
     {
         _currentEntry = new PageTimeEntry
         {
-            Id          = Guid.NewGuid(),
-            SessionId   = session.Id,
-            ProjectName = session.ProjectName,
-            UserName    = session.UserName,
-            Page        = page,
-            StartTime   = DateTime.UtcNow
+            Id           = Guid.NewGuid(),
+            SessionId    = session.Id,
+            ProjectName  = session.ProjectName,
+            UserName     = session.UserName,
+            Page         = page,
+            TimelineName = timeline,
+            IsRendering  = isRendering,
+            StartTime    = DateTime.UtcNow
         };
-        _logger.Debug("PageTracker: opened entry {Id} for page '{Page}'", _currentEntry.Id, page);
+        _logger.Debug("PageTracker: opened entry {Id} page='{Page}' timeline='{Timeline}' rendering={Rendering}",
+            _currentEntry.Id, page, timeline, isRendering);
     }
 
     private void CloseCurrentEntry()
@@ -122,8 +184,8 @@ public sealed class PageTracker : IDisposable
 
         _currentEntry.EndTime = DateTime.UtcNow;
         var duration = _currentEntry.EndTime.Value - _currentEntry.StartTime;
-        _logger.Debug("PageTracker: closed entry for '{Page}' — duration {Duration:mm\\:ss}",
-            _currentEntry.Page, duration);
+        _logger.Debug("PageTracker: closed entry page='{Page}' timeline='{Timeline}' rendering={Rendering} duration={Duration:mm\\:ss}",
+            _currentEntry.Page, _currentEntry.TimelineName, _currentEntry.IsRendering, duration);
 
         var entry = _currentEntry;
         _currentEntry = null;
@@ -135,15 +197,11 @@ public sealed class PageTracker : IDisposable
         });
     }
 
-    /// <summary>
-    /// Updates FlushedEnd on the open entry for crash recovery.
-    /// Called by the periodic 30 s timer in Program.cs.
-    /// </summary>
+    /// <summary>Updates FlushedEnd on the open entry for crash recovery (called by 30s timer in Program.cs).</summary>
     public void FlushCurrentEntry()
     {
         if (_currentEntry is null) return;
         _currentEntry.FlushedEnd = DateTime.UtcNow;
-        // Note: _pendingSession has no entry to flush yet — nothing to do
     }
 
     // ── Disposal ──────────────────────────────────────────────────────────────
@@ -152,8 +210,11 @@ public sealed class PageTracker : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _sessionManager.SessionStarted -= OnSessionStarted;
-        _sessionManager.SessionEnded   -= OnSessionEnded;
-        _monitor.PageChanged           -= OnPageChanged;
+        _sessionManager.SessionStarted  -= OnSessionStarted;
+        _sessionManager.SessionEnded    -= OnSessionEnded;
+        _monitor.PageChanged            -= OnPageChanged;
+        _monitor.TimelineChanged        -= OnTimelineChanged;
+        _monitor.RenderingStarted       -= OnRenderingStarted;
+        _monitor.RenderingStopped       -= OnRenderingStopped;
     }
 }

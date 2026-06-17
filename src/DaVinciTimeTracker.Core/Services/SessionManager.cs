@@ -65,9 +65,14 @@ public class SessionManager
         ProcessEndTrigger();
     }
 
-    public void HandleFocusLost()
+    public void HandleFocusLost(bool isRendering = false)
     {
         _logger.Information("HandleFocusLost, CurrentState: {State}", _state);
+        if (isRendering && (_state == TrackingState.Tracking || _state == TrackingState.GraceEnd))
+        {
+            _logger.Debug("HandleFocusLost suppressed — rendering in progress, session stays active");
+            return;
+        }
         ProcessEndTrigger();
     }
 
@@ -95,10 +100,47 @@ public class SessionManager
         }
     }
 
-    public void HandleUserIdle()
+    public void HandleUserIdle(bool isRendering = false)
     {
         _logger.Information("HandleUserIdle, CurrentState: {State}", _state);
+        if (isRendering && (_state == TrackingState.Tracking || _state == TrackingState.GraceEnd))
+        {
+            _logger.Debug("HandleUserIdle suppressed — rendering in progress, session stays active");
+            return;
+        }
         ProcessEndTrigger();
+    }
+
+    /// <summary>
+    /// Called when DaVinci starts rendering. If we slipped into GraceEnd (e.g. idle fired
+    /// just before the render was detected), kick back to Tracking immediately.
+    /// </summary>
+    public void HandleRenderingStarted()
+    {
+        _logger.Information("HandleRenderingStarted, CurrentState: {State}", _state);
+        if (_state == TrackingState.GraceEnd)
+        {
+            _logger.Information("Rendering started during GraceEnd — resuming Tracking");
+            ExitGracePeriod();
+        }
+    }
+
+    /// <summary>
+    /// Called when DaVinci finishes rendering. Because idle and focus-loss events are
+    /// edge-triggered and were suppressed during the render, we must re-check conditions
+    /// here. If the user is still away or DaVinci still doesn't have focus, enter GraceEnd
+    /// so the session ends normally rather than staying in Tracking forever.
+    /// </summary>
+    public void HandleRenderingStopped(bool isDaVinciInFocus, bool isUserActive)
+    {
+        _logger.Information("HandleRenderingStopped, CurrentState: {State}, Focus: {Focus}, Active: {Active}",
+            _state, isDaVinciInFocus, isUserActive);
+
+        if (_state == TrackingState.Tracking && (!isDaVinciInFocus || !isUserActive))
+        {
+            _logger.Information("Rendering stopped but user/focus conditions not met — entering GraceEnd");
+            EnterGracePeriod();
+        }
     }
 
     public void HandleUserActive()
@@ -121,7 +163,8 @@ public class SessionManager
     }
 
     // Called periodically by TimeTrackingService timer
-    public void CheckStateTransitions(bool isDaVinciInFocus, bool isUserActive, string? currentProject)
+    public void CheckStateTransitions(bool isDaVinciInFocus, bool isUserActive, string? currentProject,
+        bool isRendering = false)
     {
         // Track user activity during GraceStart period
         if (_state == TrackingState.GraceStart && isUserActive)
@@ -132,13 +175,11 @@ public class SessionManager
         switch (_state)
         {
             case TrackingState.GraceStart:
-                // Check if grace period elapsed
                 if (_sessionStartTime.HasValue)
                 {
                     var graceStartDuration = DateTime.UtcNow - _sessionStartTime.Value;
                     if (graceStartDuration >= TrackingConfiguration.GraceStartDuration)
                     {
-                        // Require: DaVinci in focus, project open, AND user was active at least once during GraceStart
                         bool hadActivityDuringGrace = _lastActivityDuringGraceStart.HasValue;
 
                         if (isDaVinciInFocus && currentProject != null && hadActivityDuringGrace)
@@ -156,15 +197,24 @@ public class SessionManager
                 break;
 
             case TrackingState.GraceEnd:
-                // Check if grace period elapsed
                 if (_graceEndStartTime.HasValue)
                 {
                     var graceEndDuration = DateTime.UtcNow - _graceEndStartTime.Value;
                     if (graceEndDuration >= TrackingConfiguration.GraceEndDuration)
                     {
-                        _logger.Information("Grace period expired ({Duration}) - ending session",
-                            TrackingConfiguration.GraceEndDuration);
-                        EndCurrentSession();
+                        if (isRendering)
+                        {
+                            // DaVinci is rendering — the UI is blocked and the user can't work.
+                            // Reset the grace clock so the session doesn't expire during a render.
+                            _graceEndStartTime = DateTime.UtcNow;
+                            _logger.Debug("GraceEnd clock reset — rendering in progress, keeping session alive");
+                        }
+                        else
+                        {
+                            _logger.Information("Grace period expired ({Duration}) - ending session",
+                                TrackingConfiguration.GraceEndDuration);
+                            EndCurrentSession();
+                        }
                     }
                 }
                 break;

@@ -29,4 +29,10 @@ public class PageTimeEntry
 
     /// <summary>Last periodic flush time for crash recovery (mirrors ProjectSession.FlushedEnd).</summary>
     public DateTime? FlushedEnd { get; set; }
+
+    /// <summary>Active timeline when this segment was recorded. Null for pages without a timeline context.</summary>
+    public string? TimelineName { get; set; }
+
+    /// <summary>True when DaVinci was actively rendering during this segment.</summary>
+    public bool IsRendering { get; set; }
 }

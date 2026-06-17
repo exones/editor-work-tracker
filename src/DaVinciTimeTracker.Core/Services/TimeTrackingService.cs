@@ -32,11 +32,13 @@ public class TimeTrackingService : IDisposable
     {
         _logger.Information("Starting Time Tracking Service");
 
-        _resolveMonitor.ProjectChanged += OnProjectChanged;
-        _resolveMonitor.ProjectClosed += OnProjectClosed;
-        _resolveMonitor.WindowFocusLost += OnWindowFocusLost;
+        _resolveMonitor.ProjectChanged   += OnProjectChanged;
+        _resolveMonitor.ProjectClosed    += OnProjectClosed;
+        _resolveMonitor.WindowFocusLost  += OnWindowFocusLost;
         _resolveMonitor.WindowFocusGained += OnWindowFocusGained;
-        _activityMonitor.UserBecameIdle += OnUserIdle;
+        _resolveMonitor.RenderingStarted  += OnRenderingStarted;
+        _resolveMonitor.RenderingStopped  += OnRenderingStopped;
+        _activityMonitor.UserBecameIdle  += OnUserIdle;
         _activityMonitor.UserBecameActive += OnUserActive;
 
         _resolveMonitor.Start();
@@ -88,11 +90,13 @@ public class TimeTrackingService : IDisposable
 
     private void OnStateCheckTimerElapsed(object? sender, ElapsedEventArgs e)
     {
-        // Pass current conditions to state machine for verification
+        // Pass current conditions to state machine for verification.
+        // isRendering suppresses the GraceEnd timeout while DaVinci's UI is blocked by a render.
         _sessionManager.CheckStateTransitions(
             Core.Native.WindowsApi.IsDaVinciResolveInFocus(),
             _activityMonitor.IsUserActive(),
-            _resolveMonitor.CurrentProject
+            _resolveMonitor.CurrentProject,
+            _resolveMonitor.IsRendering
         );
     }
 
@@ -108,7 +112,7 @@ public class TimeTrackingService : IDisposable
 
     private void OnWindowFocusLost(object? sender, EventArgs e)
     {
-        _sessionManager.HandleFocusLost();
+        _sessionManager.HandleFocusLost(_resolveMonitor.IsRendering);
     }
 
     private void OnWindowFocusGained(object? sender, EventArgs e)
@@ -120,11 +124,23 @@ public class TimeTrackingService : IDisposable
 
     private void OnUserIdle(object? sender, EventArgs e)
     {
-        _sessionManager.HandleUserIdle();
+        _sessionManager.HandleUserIdle(_resolveMonitor.IsRendering);
     }
 
     private void OnUserActive(object? sender, EventArgs e)
     {
         _sessionManager.HandleUserActive();
+    }
+
+    private void OnRenderingStarted(object? sender, EventArgs e)
+    {
+        _sessionManager.HandleRenderingStarted();
+    }
+
+    private void OnRenderingStopped(object? sender, EventArgs e)
+    {
+        _sessionManager.HandleRenderingStopped(
+            Core.Native.WindowsApi.IsDaVinciResolveInFocus(),
+            _activityMonitor.IsUserActive());
     }
 }

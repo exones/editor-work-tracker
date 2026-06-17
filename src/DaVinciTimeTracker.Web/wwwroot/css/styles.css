@@ -223,6 +223,15 @@ main {
   margin-left: 2px;
 }
 
+.page-chip-render {
+  font-size: 0.67rem;
+  font-weight: 400;
+  opacity: 0.65;
+  margin-left: 5px;
+  font-style: italic;
+  white-space: nowrap;
+}
+
 .user-badge-you {
   background: #667eea;
   color: white;
@@ -254,6 +263,16 @@ main {
 .user-last-activity {
   font-size: 0.85rem;
   color: #94a3b8;
+}
+
+.user-render-time {
+  font-size: 0.78rem;
+  color: #f97316;
+  font-weight: 500;
+  background: rgba(249, 115, 22, 0.08);
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
 }
 
 .project-header {

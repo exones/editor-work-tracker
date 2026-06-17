@@ -13,13 +13,17 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
     private readonly Timer _pollTimer;
     private string? _currentProject;
     private string? _currentPage;
+    private string? _currentTimeline;
+    private bool    _isRendering;
     private bool _wasInFocus = false;
     private bool _disposed;
     private bool _wasProcessRunning = false;
     private bool _sanityCheckPassed = false;
 
-    public string? CurrentProject => _currentProject;
-    public string? CurrentPage => _currentPage;
+    public string? CurrentProject  => _currentProject;
+    public string? CurrentPage     => _currentPage;
+    public string? CurrentTimeline => _currentTimeline;
+    public bool    IsRendering     => _isRendering;
 
     public event EventHandler<string>? ProjectChanged;
     public event EventHandler? ProjectClosed;
@@ -27,6 +31,12 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
     public event EventHandler? WindowFocusGained;
     /// <summary>Fires when the active DaVinci page changes while a project is open.</summary>
     public event EventHandler<string>? PageChanged;
+    /// <summary>Fires when the active timeline changes while a project is open.</summary>
+    public event EventHandler<string>? TimelineChanged;
+    /// <summary>Fires when DaVinci starts rendering.</summary>
+    public event EventHandler? RenderingStarted;
+    /// <summary>Fires when DaVinci stops rendering.</summary>
+    public event EventHandler? RenderingStopped;
 
     public DaVinciResolveMonitor(ResolveApiClient apiClient, ILogger logger, int pollIntervalMs = 2000)
     {
@@ -94,21 +104,26 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
             }
         }
 
-        // Process is running, now check project + page via Python API
-        var (projectName, page) = await _apiClient.GetCurrentProjectNameAsync();
+        // Process is running, now check project + page + timeline + render state via Python API
+        var status = await _apiClient.GetCurrentProjectNameAsync();
+        var projectName = status.ProjectName;
+        var page        = status.Page;
+        var timeline    = status.Timeline;
+        var isRendering = status.IsRendering;
 
         if (projectName != _currentProject)
         {
             if (projectName == null && _currentProject != null)
             {
-                // Project closed — also clear page
+                // Project closed — clear all derivative state
                 _logger.Information("DaVinci project closed: {ProjectName}", _currentProject);
                 ProjectClosed?.Invoke(this, EventArgs.Empty);
-                _currentPage = null;
+                _currentPage     = null;
+                _currentTimeline = null;
+                _isRendering     = false;
             }
             else if (projectName != null)
             {
-                // Project opened or changed
                 _logger.Information("DaVinci project changed to: {ProjectName}", projectName);
                 ProjectChanged?.Invoke(this, projectName);
             }
@@ -116,12 +131,36 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
             _currentProject = projectName;
         }
 
-        // Detect page changes (only while a project is open)
-        if (_currentProject != null && page != null && page != _currentPage)
+        if (_currentProject == null) return; // nothing more to do
+
+        // Page changes (null = DaVinci minimised, keep last known)
+        if (page != null && page != _currentPage)
         {
             _logger.Debug("DaVinci page changed: {OldPage} → {NewPage}", _currentPage, page);
             _currentPage = page;
             PageChanged?.Invoke(this, page);
+        }
+
+        // Timeline changes (null = no timeline active, keep last known)
+        if (timeline != null && timeline != _currentTimeline)
+        {
+            _logger.Debug("DaVinci timeline changed: {OldTimeline} → {NewTimeline}", _currentTimeline, timeline);
+            _currentTimeline = timeline;
+            TimelineChanged?.Invoke(this, timeline);
+        }
+
+        // Render state transitions
+        if (isRendering && !_isRendering)
+        {
+            _logger.Information("DaVinci rendering started");
+            _isRendering = true;
+            RenderingStarted?.Invoke(this, EventArgs.Empty);
+        }
+        else if (!isRendering && _isRendering)
+        {
+            _logger.Information("DaVinci rendering stopped");
+            _isRendering = false;
+            RenderingStopped?.Invoke(this, EventArgs.Empty);
         }
     }
 

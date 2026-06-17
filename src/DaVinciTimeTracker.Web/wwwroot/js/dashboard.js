@@ -143,6 +143,9 @@ function renderProjects(projects) {
                             </div>
                             <div class="user-time-info">
                                 <span class="user-time">${formatTimeSpan(user.totalElapsedTime.totalSeconds)}</span>
+                                ${user.totalRenderTime && user.totalRenderTime.totalSeconds > 30
+                                    ? `<span class="user-render-time" title="Time waiting for renders">+${formatTimeSpan(user.totalRenderTime.totalSeconds)} render</span>`
+                                    : ''}
                                 <span class="user-sessions">${user.sessionCount} session${user.sessionCount !== 1 ? 's' : ''}</span>
                                 <span class="user-last-activity">${formatLastActivity(user.lastActivity)}</span>
                             </div>
@@ -200,11 +203,26 @@ function renderPageBreakdown(breakdown) {
     if (!breakdown || breakdown.length === 0) return "";
 
     const chips = breakdown.map(p => {
-        const color = PAGE_COLORS[p.page] || PAGE_COLORS.unknown;
-        const label = PAGE_LABELS[p.page] || p.page;
-        const time  = formatTimeSpan(p.totalTime.totalSeconds);
-        return `<span class="page-chip" style="--chip-color:${color}" title="${label}: ${time} (${p.percentage}%)">
-            <span class="page-chip-dot"></span>${label} <span class="page-chip-meta">${time} · ${p.percentage}%</span>
+        const color      = PAGE_COLORS[p.page] || PAGE_COLORS.unknown;
+        const label      = PAGE_LABELS[p.page] || p.page;
+        const totalTime  = formatTimeSpan(p.totalTime.totalSeconds);
+        const renderSecs = p.renderTime ? p.renderTime.totalSeconds : 0;
+        const timelines  = (p.timelines && p.timelines.length > 0)
+            ? p.timelines.join(" · ")
+            : "";
+
+        // Build tooltip: page, time, timeline names, render info
+        let tooltip = `${label}: ${totalTime} (${p.percentage}%)`;
+        if (timelines)   tooltip += `\n${timelines}`;
+        if (renderSecs > 0) tooltip += `\nincl. ${formatTimeSpan(renderSecs)} rendering`;
+
+        // Render annotation shown inline when render time is significant (>10s)
+        const renderAnnotation = renderSecs > 10
+            ? `<span class="page-chip-render" title="${formatTimeSpan(renderSecs)} rendering">+${formatTimeSpan(renderSecs)} render</span>`
+            : "";
+
+        return `<span class="page-chip" style="--chip-color:${color}" title="${escapeHtml(tooltip)}">
+            <span class="page-chip-dot"></span>${label} <span class="page-chip-meta">${totalTime} · ${p.percentage}%</span>${renderAnnotation}
         </span>`;
     }).join("");
 

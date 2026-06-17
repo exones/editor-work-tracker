@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 
 # Fix encoding for Windows before any output
 if sys.platform == 'win32':
@@ -62,13 +63,25 @@ try:
             project = pm.GetCurrentProject()
             if project:
                 project_name = project.GetName()
-                # GetCurrentPage() returns None when DaVinci is minimised or not in foreground.
-                # Only include page in output when we have a real value.
-                page = resolve.GetCurrentPage()
-                if page:
-                    print(f"{project_name}|{page}")
-                else:
-                    print(project_name)
+                # GetCurrentPage() returns None when DaVinci is minimised / not in foreground.
+                page = resolve.GetCurrentPage()  # may be None
+                # Timeline name — works reliably even from a fresh process
+                try:
+                    tl            = project.GetCurrentTimeline()
+                    timeline_name = (tl.GetName() if tl else None) or None
+                except Exception:
+                    timeline_name = None
+                # Render state — project-level, not UI-dependent
+                try:
+                    is_rendering = bool(project.IsRenderingInProgress())
+                except Exception:
+                    is_rendering = False
+                print(json.dumps({
+                    "project":   project_name,
+                    "page":      page,
+                    "timeline":  timeline_name,
+                    "rendering": is_rendering,
+                }))
                 sys.exit(0)
 
     print("NO_PROJECT")

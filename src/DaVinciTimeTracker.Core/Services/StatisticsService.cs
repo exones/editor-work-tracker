@@ -21,9 +21,14 @@ public class StatisticsService
             {
                 var totalSeconds = g.Sum(s => CalculateSeconds(s));
 
-                var breakdown = pagesByProjectUser.TryGetValue(g.Key, out var entries)
-                    ? BuildPageBreakdown(entries, totalSeconds)
-                    : [];
+                pagesByProjectUser.TryGetValue(g.Key, out var entries);
+                entries ??= [];
+
+                var renderSeconds = entries.Where(p => p.IsRendering).Sum(p => CalculatePageSeconds(p));
+                var workSeconds   = totalSeconds - renderSeconds;
+                if (workSeconds < 0) workSeconds = 0;
+
+                var breakdown = BuildPageBreakdown(entries, totalSeconds);
 
                 return new ProjectStatistics
                 {
@@ -31,6 +36,8 @@ public class StatisticsService
                     UserName         = g.Key.UserName,
                     TotalActiveTime  = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(totalSeconds)),
                     TotalElapsedTime = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(totalSeconds)),
+                    TotalWorkTime    = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(workSeconds)),
+                    TotalRenderTime  = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(renderSeconds)),
                     LastActivity     = g.Max(s => s.EndTime ?? s.StartTime),
                     SessionCount     = g.Count(),
                     IsCurrentlyTracking = g.Key.ProjectName == currentProjectName
@@ -53,12 +60,24 @@ public class StatisticsService
             .GroupBy(p => p.Page)
             .Select(g =>
             {
-                var pageSeconds = g.Sum(p => CalculatePageSeconds(p));
+                var totalSecs  = g.Sum(p => CalculatePageSeconds(p));
+                var activeSecs = g.Where(p => !p.IsRendering).Sum(p => CalculatePageSeconds(p));
+                var renderSecs = g.Where(p =>  p.IsRendering).Sum(p => CalculatePageSeconds(p));
+                var timelines  = g
+                    .Where(p => !string.IsNullOrWhiteSpace(p.TimelineName))
+                    .Select(p => p.TimelineName!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(t => t)
+                    .ToList();
+
                 return new PageTimeStat
                 {
                     Page       = g.Key,
-                    TotalTime  = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(pageSeconds)),
-                    Percentage = Math.Round(pageSeconds * 100.0 / totalProjectSeconds, 1)
+                    TotalTime  = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(totalSecs)),
+                    ActiveTime = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(activeSecs)),
+                    RenderTime = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(renderSecs)),
+                    Percentage = Math.Round(totalSecs * 100.0 / totalProjectSeconds, 1),
+                    Timelines  = timelines
                 };
             })
             .Where(p => p.TotalTime.TotalSeconds > 0)
