@@ -275,25 +275,23 @@ main {
   letter-spacing: 0.05em;
   align-self: flex-end;
   padding-bottom: 2px;
-  margin-left: -8px; /* tuck close to the number */
 }
 
 /* divider between active and render */
 .user-render-sep {
-  font-size: 0.9rem;
-  color: #e2e8f0;
-  font-weight: 400;
-  margin: 0 -4px;
+  font-size: 0.85rem;
+  color: #64748b;
+  font-weight: 600;
 }
 
-/* render time — same size as active, muted colour */
+/* render time — same size as active but subdued */
 .user-render-time {
   font-size: 1.05rem;
-  font-weight: 700;
+  font-weight: 600;
   color: #94a3b8;
 }
 
-/* "render" label mirrors "active" label style but stays muted */
+/* "render" label */
 .user-render-label {
   font-size: 0.68rem;
   font-weight: 600;
@@ -302,7 +300,6 @@ main {
   letter-spacing: 0.05em;
   align-self: flex-end;
   padding-bottom: 2px;
-  margin-left: -8px;
 }
 
 .project-header {

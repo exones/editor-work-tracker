@@ -240,7 +240,7 @@ function renderPageBreakdown(breakdown) {
 
         // Render annotation shown inline when render time is significant (>10s)
         const renderAnnotation = renderSecs > 10
-            ? `<span class="page-chip-render" title="Included in total — ${formatTimeSpan(renderSecs)} waiting for renders">incl. ${formatTimeSpan(renderSecs)} render</span>`
+            ? `<span class="page-chip-render" title="Time waiting for renders">+${formatTimeSpan(renderSecs)} render</span>`
             : "";
 
         return `<span class="page-chip" style="--chip-color:${color}" title="${escapeHtml(tooltip)}">
