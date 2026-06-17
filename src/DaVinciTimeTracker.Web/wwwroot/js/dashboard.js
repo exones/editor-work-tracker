@@ -38,11 +38,22 @@ function updateStatusBar(status) {
             statusText.textContent = `Tracking: "${status.projectName}" [Grace Period]`;
             indicator.classList.add("graceend");
         } else {
-            statusText.textContent = `Currently tracking: "${status.projectName}"`;
+            const pageLabel     = status.page     ? ` · ${formatPageName(status.page)}`     : "";
+            const timelineLabel = status.timeline ? ` · ${status.timeline}` : "";
+            const renderNote    = status.isRendering ? " ⟳ rendering" : "";
+            statusText.textContent = `${status.projectName}${pageLabel}${timelineLabel}${renderNote}`;
             indicator.classList.add("tracking");
         }
+    } else if (!status.isResolveRunning) {
+        statusText.textContent = "DaVinci not open";
+        indicator.classList.add("idle");
+    } else if (status.isResolveRunning && !status.liveProject) {
+        statusText.textContent = "DaVinci open — no project loaded";
+        indicator.classList.add("idle");
     } else {
-        statusText.textContent = "Not tracking";
+        // Resolve running + project open, but session not active (idle/unfocused)
+        const pageLabel = status.page ? ` · ${formatPageName(status.page)}` : "";
+        statusText.textContent = `Not tracking: "${status.liveProject}"${pageLabel}`;
         indicator.classList.add("idle");
     }
 }
@@ -142,10 +153,13 @@ function renderProjects(projects) {
                                 ${trackingBadge}
                             </div>
                             <div class="user-time-info">
-                                <span class="user-time">${formatTimeSpan(user.totalElapsedTime.totalSeconds)}</span>
-                                ${user.totalRenderTime && user.totalRenderTime.totalSeconds > 30
-                                    ? `<span class="user-render-time" title="Time waiting for renders">+${formatTimeSpan(user.totalRenderTime.totalSeconds)} render</span>`
-                                    : ''}
+                                <span class="user-time">${formatTimeSpan((user.totalWorkTime || user.totalElapsedTime).totalSeconds)}</span>
+                                <span class="user-time-label">active</span>
+                                ${user.totalRenderTime && user.totalRenderTime.totalSeconds > 30 ? `
+                                    <span class="user-render-sep">+</span>
+                                    <span class="user-render-time" title="Time waiting for renders to complete">${formatTimeSpan(user.totalRenderTime.totalSeconds)}</span>
+                                    <span class="user-render-label">render</span>
+                                ` : ''}
                                 <span class="user-sessions">${user.sessionCount} session${user.sessionCount !== 1 ? 's' : ''}</span>
                                 <span class="user-last-activity">${formatLastActivity(user.lastActivity)}</span>
                             </div>
@@ -172,6 +186,14 @@ function renderProjects(projects) {
             `;
         })
         .join("");
+}
+
+function formatPageName(page) {
+    const map = {
+        color: "Color", edit: "Edit", cut: "Cut", media: "Media",
+        fusion: "Fusion", fairlight: "Fairlight", deliver: "Deliver", photo: "Photo"
+    };
+    return map[page] || (page.charAt(0).toUpperCase() + page.slice(1));
 }
 
 // ── Page breakdown ────────────────────────────────────────────────────────────
@@ -218,7 +240,7 @@ function renderPageBreakdown(breakdown) {
 
         // Render annotation shown inline when render time is significant (>10s)
         const renderAnnotation = renderSecs > 10
-            ? `<span class="page-chip-render" title="${formatTimeSpan(renderSecs)} rendering">+${formatTimeSpan(renderSecs)} render</span>`
+            ? `<span class="page-chip-render" title="Included in total — ${formatTimeSpan(renderSecs)} waiting for renders">incl. ${formatTimeSpan(renderSecs)} render</span>`
             : "";
 
         return `<span class="page-chip" style="--chip-color:${color}" title="${escapeHtml(tooltip)}">

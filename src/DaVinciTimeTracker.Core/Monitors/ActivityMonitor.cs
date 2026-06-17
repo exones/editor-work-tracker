@@ -1,25 +1,36 @@
 using System.Timers;
 using DaVinciTimeTracker.Core.Native;
+using DaVinciTimeTracker.Core.Services;
 using Serilog;
 using Timer = System.Timers.Timer;
 
 namespace DaVinciTimeTracker.Core.Monitors;
 
+/// <summary>
+/// Polls OS idle time every 5 seconds and writes the current activity state
+/// into TrackingContext. The SessionManager reducer reads it via snapshots.
+/// </summary>
 public class ActivityMonitor : IMonitor, IDisposable
 {
-    private readonly ILogger _logger;
-    private readonly Timer _checkTimer;
-    private readonly TimeSpan _inactivityThreshold;
+    private readonly ILogger                 _logger;
+    private readonly TrackingContext         _context;
+    private readonly ISystemActivityProvider _systemActivity;
+    private readonly Timer                   _checkTimer;
+    private readonly TimeSpan                _inactivityThreshold;
     private bool _wasActive = true;
     private bool _disposed;
 
-    public event EventHandler? UserBecameIdle;
-    public event EventHandler? UserBecameActive;
-
-    public ActivityMonitor(ILogger logger, int checkIntervalMs = 5000, int inactivityThresholdMinutes = 3)
+    public ActivityMonitor(
+        TrackingContext context,
+        ISystemActivityProvider systemActivity,
+        ILogger logger,
+        int checkIntervalMs = 5000,
+        int inactivityThresholdMinutes = 1)
     {
-        _logger = logger;
-        _checkTimer = new Timer(checkIntervalMs);
+        _context             = context;
+        _systemActivity      = systemActivity;
+        _logger              = logger;
+        _checkTimer          = new Timer(checkIntervalMs);
         _checkTimer.Elapsed += OnTimerElapsed;
         _inactivityThreshold = TimeSpan.FromMinutes(inactivityThresholdMinutes);
     }
@@ -27,24 +38,23 @@ public class ActivityMonitor : IMonitor, IDisposable
     private void OnTimerElapsed(object? sender, ElapsedEventArgs e)
     {
         var isCurrentlyActive = IsUserActive();
+        _context.UpdateActivity(isCurrentlyActive);
 
         if (isCurrentlyActive && !_wasActive)
         {
             _logger.Information("User became active");
-            UserBecameActive?.Invoke(this, EventArgs.Empty);
             _wasActive = true;
         }
         else if (!isCurrentlyActive && _wasActive)
         {
             _logger.Information("User became idle");
-            UserBecameIdle?.Invoke(this, EventArgs.Empty);
             _wasActive = false;
         }
     }
 
     public bool IsUserActive()
     {
-        var idleTime = WindowsApi.GetIdleTime();
+        var idleTime = _systemActivity.GetIdleTime();
         return idleTime < _inactivityThreshold;
     }
 
@@ -62,11 +72,7 @@ public class ActivityMonitor : IMonitor, IDisposable
 
     protected virtual void Dispose(bool disposing)
     {
-        if (_disposed)
-        {
-            return;
-        }
-
+        if (_disposed) return;
         if (disposing)
         {
             _checkTimer.Stop();
@@ -74,18 +80,14 @@ public class ActivityMonitor : IMonitor, IDisposable
             _checkTimer.Dispose();
             _logger.Information("Activity monitor disposed");
         }
-
         _disposed = true;
     }
 
     public void Dispose()
     {
-        Dispose(disposing: true);
+        Dispose(true);
         GC.SuppressFinalize(this);
     }
 
-    ~ActivityMonitor()
-    {
-        Dispose(disposing: false);
-    }
+    ~ActivityMonitor() => Dispose(false);
 }

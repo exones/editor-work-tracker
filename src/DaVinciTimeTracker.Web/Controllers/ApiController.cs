@@ -11,19 +11,22 @@ public class ApiController : ControllerBase
 {
     private readonly SessionRepository _repository;
     private readonly StatisticsService _statisticsService;
-    private readonly SessionManager _sessionManager;
+    private readonly SessionManager    _sessionManager;
     private readonly NodeToggleService _nodeToggleService;
+    private readonly TrackingContext   _trackingContext;
 
     public ApiController(
         SessionRepository repository,
         StatisticsService statisticsService,
         SessionManager sessionManager,
-        NodeToggleService nodeToggleService)
+        NodeToggleService nodeToggleService,
+        TrackingContext trackingContext)
     {
-        _repository = repository;
+        _repository      = repository;
         _statisticsService = statisticsService;
-        _sessionManager = sessionManager;
+        _sessionManager  = sessionManager;
         _nodeToggleService = nodeToggleService;
+        _trackingContext  = trackingContext;
     }
 
     [HttpGet("projects")]
@@ -60,12 +63,24 @@ public class ApiController : ControllerBase
     public IActionResult GetCurrentStatus()
     {
         Response.Headers.ContentType = "application/json; charset=utf-8";
+        var snap = _trackingContext.Snapshot();
         return Ok(new
         {
-            ProjectName = _sessionManager.CurrentProjectName,
-            UserName = _sessionManager.CurrentUserName,
-            State = _sessionManager.CurrentState.ToString(),
-            IsTracking = _sessionManager.CurrentState != Core.Models.TrackingState.NotTracking
+            ProjectName      = _sessionManager.CurrentProjectName,
+            UserName         = _sessionManager.CurrentUserName,
+            State            = _sessionManager.CurrentState.ToString(),
+            IsTracking       = _sessionManager.CurrentState != Core.Models.TrackingState.NotTracking,
+            // Richer live state from TrackingContext
+            IsResolveRunning = snap.IsResolveRunning,
+            // Live project from context (non-null whenever a project is open, regardless of tracking state)
+            LiveProject      = snap.Project,
+            Page             = snap.Page,
+            Timeline         = snap.Timeline,
+            IsRendering      = snap.IsRendering,
+            IsInFocus        = snap.IsInFocus,
+            IsUserActive     = snap.IsUserActive,
+            LastActivityChange = snap.LastActivityChange,
+            LastFocusChange    = snap.LastFocusChange
         });
     }
 

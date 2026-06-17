@@ -1,5 +1,6 @@
 using DaVinciTimeTracker.Core.Models;
 using DaVinciTimeTracker.Core.Monitors;
+using DaVinciTimeTracker.Core.Services;
 using Serilog;
 
 namespace DaVinciTimeTracker.Core.Services;
@@ -22,10 +23,11 @@ namespace DaVinciTimeTracker.Core.Services;
 public sealed class PageTracker : IDisposable
 {
     private readonly DaVinciResolveMonitor _monitor;
-    private readonly SessionManager _sessionManager;
-    private readonly ILogger _logger;
+    private readonly TrackingContext       _context;
+    private readonly SessionManager        _sessionManager;
+    private readonly ILogger               _logger;
 
-    private PageTimeEntry? _currentEntry;
+    private PageTimeEntry?  _currentEntry;
     private ProjectSession? _pendingSession; // session waiting for first non-null page
     private bool _disposed;
 
@@ -34,9 +36,10 @@ public sealed class PageTracker : IDisposable
 
     public PageTimeEntry? CurrentEntry => _currentEntry;
 
-    public PageTracker(DaVinciResolveMonitor monitor, SessionManager sessionManager, ILogger logger)
+    public PageTracker(DaVinciResolveMonitor monitor, TrackingContext context, SessionManager sessionManager, ILogger logger)
     {
         _monitor        = monitor;
+        _context        = context;
         _sessionManager = sessionManager;
         _logger         = logger;
 
@@ -52,13 +55,14 @@ public sealed class PageTracker : IDisposable
 
     private void OnSessionStarted(object? sender, ProjectSession session)
     {
-        var page = _monitor.CurrentPage;
+        var snap = _context.Snapshot();
+        var page = snap.Page;
         if (page != null)
         {
             _pendingSession = null;
             _logger.Information("PageTracker: session started — page '{Page}' timeline '{Timeline}'",
-                page, _monitor.CurrentTimeline);
-            OpenEntry(session, page, _monitor.CurrentTimeline, _monitor.IsRendering);
+                page, snap.Timeline);
+            OpenEntry(session, page, snap.Timeline, snap.IsRendering);
         }
         else
         {
@@ -82,24 +86,24 @@ public sealed class PageTracker : IDisposable
         _logger.Debug("PageTracker: page changed to '{Page}' — rotating entry", newPage);
         CloseCurrentEntry();
 
-        var s = _sessionManager.GetCurrentSession();
+        var snap = _context.Snapshot();
+        var s    = _sessionManager.GetCurrentSession();
         if (s is not null)
-            OpenEntry(s, newPage, _monitor.CurrentTimeline, _monitor.IsRendering);
+            OpenEntry(s, newPage, snap.Timeline, snap.IsRendering);
     }
 
     private void OnTimelineChanged(object? sender, string newTimeline)
     {
         if (_currentEntry is null && _pendingSession is null) return;
-
-        // If still waiting for first page, timeline alone doesn't trigger an entry yet
         if (_currentEntry is null) return;
 
         _logger.Debug("PageTracker: timeline changed to '{Timeline}' — rotating entry", newTimeline);
+        var snap = _context.Snapshot();
         CloseCurrentEntry();
 
         var s = _sessionManager.GetCurrentSession();
         if (s is not null)
-            OpenEntry(s, _monitor.CurrentPage ?? _currentEntry?.Page ?? "unknown", newTimeline, _monitor.IsRendering);
+            OpenEntry(s, snap.Page ?? _currentEntry?.Page ?? "unknown", newTimeline, snap.IsRendering);
     }
 
     private void OnRenderingStarted(object? sender, EventArgs e)
@@ -143,6 +147,7 @@ public sealed class PageTracker : IDisposable
 
         _logger.Information("PageTracker: first page '{Page}' detected — opening deferred entry from session start", newPage);
         var session = _pendingSession;
+        var snap    = _context.Snapshot();
         _pendingSession = null;
 
         _currentEntry = new PageTimeEntry
@@ -152,8 +157,8 @@ public sealed class PageTracker : IDisposable
             ProjectName  = session.ProjectName,
             UserName     = session.UserName,
             Page         = newPage,
-            TimelineName = _monitor.CurrentTimeline,
-            IsRendering  = _monitor.IsRendering,
+            TimelineName = snap.Timeline,
+            IsRendering  = snap.IsRendering,
             StartTime    = session.StartTime  // retroactive to session start
         };
         return true;

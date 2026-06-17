@@ -5,142 +5,81 @@ using Timer = System.Timers.Timer;
 
 namespace DaVinciTimeTracker.Core.Services;
 
+/// <summary>
+/// Orchestrates the tracking components. On each 2-second tick it snapshots the
+/// TrackingContext and feeds it to the SessionManager reducer. No edge-event
+/// subscriptions, no parameter threading.
+/// </summary>
 public class TimeTrackingService : IDisposable
 {
     private readonly DaVinciResolveMonitor _resolveMonitor;
-    private readonly ActivityMonitor _activityMonitor;
-    private readonly SessionManager _sessionManager;
-    private readonly ILogger _logger;
-    private readonly Timer _stateCheckTimer;
+    private readonly ActivityMonitor       _activityMonitor;
+    private readonly SessionManager        _sessionManager;
+    private readonly TrackingContext       _context;
+    private readonly ILogger               _logger;
+    private readonly Timer                 _tickTimer;
     private bool _disposed;
 
     public TimeTrackingService(
         DaVinciResolveMonitor resolveMonitor,
         ActivityMonitor activityMonitor,
         SessionManager sessionManager,
+        TrackingContext context,
         ILogger logger)
     {
-        _resolveMonitor = resolveMonitor;
+        _resolveMonitor  = resolveMonitor;
         _activityMonitor = activityMonitor;
-        _sessionManager = sessionManager;
-        _logger = logger;
-        _stateCheckTimer = new Timer(2000); // Check every 2 seconds
-        _stateCheckTimer.Elapsed += OnStateCheckTimerElapsed;
+        _sessionManager  = sessionManager;
+        _context         = context;
+        _logger          = logger;
+        _tickTimer       = new Timer(2000);
+        _tickTimer.Elapsed += OnTick;
     }
 
     public void Start()
     {
         _logger.Information("Starting Time Tracking Service");
-
-        _resolveMonitor.ProjectChanged   += OnProjectChanged;
-        _resolveMonitor.ProjectClosed    += OnProjectClosed;
-        _resolveMonitor.WindowFocusLost  += OnWindowFocusLost;
-        _resolveMonitor.WindowFocusGained += OnWindowFocusGained;
-        _resolveMonitor.RenderingStarted  += OnRenderingStarted;
-        _resolveMonitor.RenderingStopped  += OnRenderingStopped;
-        _activityMonitor.UserBecameIdle  += OnUserIdle;
-        _activityMonitor.UserBecameActive += OnUserActive;
-
         _resolveMonitor.Start();
         _activityMonitor.Start();
-        _stateCheckTimer.Start();
+        _tickTimer.Start();
     }
 
     public void Stop()
     {
         _logger.Information("Stopping Time Tracking Service");
-
-        _stateCheckTimer.Stop();
+        _tickTimer.Stop();
         _resolveMonitor.Stop();
         _activityMonitor.Stop();
 
-        _sessionManager.HandleProjectClosed();
+        // Force a final tick with the last known snapshot to end any open session
+        _sessionManager.Tick(TrackingSnapshot.Closed);
+    }
+
+    private void OnTick(object? sender, ElapsedEventArgs e)
+    {
+        _sessionManager.Tick(_context.Snapshot());
     }
 
     protected virtual void Dispose(bool disposing)
     {
-        if (_disposed)
-        {
-            return;
-        }
-
+        if (_disposed) return;
         if (disposing)
         {
-            _stateCheckTimer.Stop();
-            _stateCheckTimer.Elapsed -= OnStateCheckTimerElapsed;
-            _stateCheckTimer.Dispose();
+            _tickTimer.Stop();
+            _tickTimer.Elapsed -= OnTick;
+            _tickTimer.Dispose();
             _resolveMonitor.Dispose();
             _activityMonitor.Dispose();
             _logger.Information("Time Tracking Service disposed");
         }
-
         _disposed = true;
     }
 
     public void Dispose()
     {
-        Dispose(disposing: true);
+        Dispose(true);
         GC.SuppressFinalize(this);
     }
 
-    ~TimeTrackingService()
-    {
-        Dispose(disposing: false);
-    }
-
-    private void OnStateCheckTimerElapsed(object? sender, ElapsedEventArgs e)
-    {
-        // Pass current conditions to state machine for verification.
-        // isRendering suppresses the GraceEnd timeout while DaVinci's UI is blocked by a render.
-        _sessionManager.CheckStateTransitions(
-            Core.Native.WindowsApi.IsDaVinciResolveInFocus(),
-            _activityMonitor.IsUserActive(),
-            _resolveMonitor.CurrentProject,
-            _resolveMonitor.IsRendering
-        );
-    }
-
-    private void OnProjectChanged(object? sender, string projectName)
-    {
-        _sessionManager.HandleProjectChanged(projectName);
-    }
-
-    private void OnProjectClosed(object? sender, EventArgs e)
-    {
-        _sessionManager.HandleProjectClosed();
-    }
-
-    private void OnWindowFocusLost(object? sender, EventArgs e)
-    {
-        _sessionManager.HandleFocusLost(_resolveMonitor.IsRendering);
-    }
-
-    private void OnWindowFocusGained(object? sender, EventArgs e)
-    {
-        _sessionManager.HandleFocusGained(
-            _resolveMonitor.CurrentProject,
-            _activityMonitor.IsUserActive());
-    }
-
-    private void OnUserIdle(object? sender, EventArgs e)
-    {
-        _sessionManager.HandleUserIdle(_resolveMonitor.IsRendering);
-    }
-
-    private void OnUserActive(object? sender, EventArgs e)
-    {
-        _sessionManager.HandleUserActive();
-    }
-
-    private void OnRenderingStarted(object? sender, EventArgs e)
-    {
-        _sessionManager.HandleRenderingStarted();
-    }
-
-    private void OnRenderingStopped(object? sender, EventArgs e)
-    {
-        _sessionManager.HandleRenderingStopped(
-            Core.Native.WindowsApi.IsDaVinciResolveInFocus(),
-            _activityMonitor.IsUserActive());
-    }
+    ~TimeTrackingService() => Dispose(false);
 }

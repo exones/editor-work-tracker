@@ -188,6 +188,7 @@ main {
   flex-wrap: wrap;
   gap: 5px;
   margin-top: 7px;
+  justify-content: flex-end;
 }
 
 .page-chip {
@@ -250,8 +251,8 @@ main {
 }
 
 .user-time {
-  font-size: 1.1rem;
-  font-weight: 600;
+  font-size: 1.05rem;
+  font-weight: 700;
   color: #1e293b;
 }
 
@@ -265,14 +266,43 @@ main {
   color: #94a3b8;
 }
 
+/* "active" label sits flush below the time number */
+.user-time-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  align-self: flex-end;
+  padding-bottom: 2px;
+  margin-left: -8px; /* tuck close to the number */
+}
+
+/* divider between active and render */
+.user-render-sep {
+  font-size: 0.9rem;
+  color: #e2e8f0;
+  font-weight: 400;
+  margin: 0 -4px;
+}
+
+/* render time — same size as active, muted colour */
 .user-render-time {
-  font-size: 0.78rem;
-  color: #f97316;
-  font-weight: 500;
-  background: rgba(249, 115, 22, 0.08);
-  padding: 1px 6px;
-  border-radius: 8px;
-  white-space: nowrap;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+/* "render" label mirrors "active" label style but stays muted */
+.user-render-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  align-self: flex-end;
+  padding-bottom: 2px;
+  margin-left: -8px;
 }
 
 .project-header {

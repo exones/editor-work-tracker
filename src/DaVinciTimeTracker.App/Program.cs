@@ -2,6 +2,7 @@ using DaVinciTimeTracker.App;
 using DaVinciTimeTracker.App.Hotkeys;
 using DaVinciTimeTracker.Core.Monitors;
 using DaVinciTimeTracker.Core.Models;
+using DaVinciTimeTracker.Core.Native;
 using DaVinciTimeTracker.Core.NodeToggle;
 using DaVinciTimeTracker.Core.Resolve;
 using DaVinciTimeTracker.Core.Services;
@@ -44,6 +45,13 @@ try
     // All AppState singletons that the DI container resolves via factory lambdas must be set
     // BEFORE the web server starts. If a request arrives before they're set the factory returns
     // null and ASP.NET throws "Unable to resolve service" → 500 on every endpoint.
+
+    // Platform-specific OS activity/focus provider
+    var systemActivity = SystemActivityProviderFactory.Create(Log.Logger);
+
+    // Shared tracking context — written by monitors, read by the SessionManager reducer
+    var trackingContext = new TrackingContext();
+    AppState.TrackingContext = trackingContext;
 
     // SessionManager needs no Python — create immediately
     var sessionManager = new SessionManager(Log.Logger);
@@ -96,6 +104,7 @@ try
         builder.Services.AddSingleton<StatisticsService>();
         builder.Services.AddSingleton<SessionManager>(sp => AppState.SessionManager);
         builder.Services.AddSingleton<NodeToggleService>(sp => AppState.NodeToggleService);
+        builder.Services.AddSingleton<TrackingContext>(sp => AppState.TrackingContext);
 
         builder.WebHost.UseUrls("http://localhost:5555");
 
@@ -200,13 +209,13 @@ try
     Log.Information("Using script: {ScriptPath}", scriptPath);
 
     var resolveApiClient = new ResolveApiClient(pythonPath, scriptPath, Log.Logger);
-    var resolveMonitor = new DaVinciResolveMonitor(resolveApiClient, Log.Logger);
-    var activityMonitor = new ActivityMonitor(Log.Logger, checkIntervalMs: 5000, inactivityThresholdMinutes: 1);
+    var resolveMonitor   = new DaVinciResolveMonitor(resolveApiClient, trackingContext, systemActivity, Log.Logger);
+    var activityMonitor  = new ActivityMonitor(trackingContext, systemActivity, Log.Logger, checkIntervalMs: 5000, inactivityThresholdMinutes: 1);
     // sessionManager was already created before the web server — reuse it
-    var timeTrackingService = new TimeTrackingService(resolveMonitor, activityMonitor, sessionManager, Log.Logger);
+    var timeTrackingService = new TimeTrackingService(resolveMonitor, activityMonitor, sessionManager, trackingContext, Log.Logger);
 
     // Page time tracking
-    var pageTracker = new PageTracker(resolveMonitor, sessionManager, Log.Logger);
+    var pageTracker = new PageTracker(resolveMonitor, trackingContext, sessionManager, Log.Logger);
     pageTracker.PageSegmentEnded += async entry =>
     {
         try
@@ -337,7 +346,8 @@ finally
 public static class AppState
 {
     public static TimeTrackingService TimeTrackingService { get; set; } = null!;
-    public static SessionManager SessionManager { get; set; } = null!;
-    public static SessionRepository SessionRepository { get; set; } = null!;
-    public static NodeToggleService NodeToggleService { get; set; } = null!;
+    public static SessionManager      SessionManager      { get; set; } = null!;
+    public static SessionRepository   SessionRepository   { get; set; } = null!;
+    public static NodeToggleService   NodeToggleService   { get; set; } = null!;
+    public static TrackingContext     TrackingContext      { get; set; } = null!;
 }

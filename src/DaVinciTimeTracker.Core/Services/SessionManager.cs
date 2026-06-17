@@ -4,32 +4,43 @@ using Serilog;
 
 namespace DaVinciTimeTracker.Core.Services;
 
+/// <summary>
+/// Pure poll-based session state machine. All state decisions are driven by
+/// TrackingSnapshot values read once per 2-second tick — no edge events, no
+/// parameter threading. This eliminates the entire edge-suppression bug class.
+///
+/// State transitions:
+///   NotTracking → GraceStart  when project + focus + active
+///   GraceStart  → Tracking    when grace elapsed + conditions still valid
+///   GraceStart  → NotTracking when grace elapsed + conditions invalid
+///   Tracking    → GraceEnd    when !rendering AND (!focus OR !active)
+///   GraceEnd    → Tracking    when focus + active
+///   GraceEnd    → NotTracking when grace expired (unless rendering — clock resets)
+/// </summary>
 public class SessionManager
 {
-
     private readonly ILogger _logger;
-    private readonly string _currentUserName;
+    private readonly string  _currentUserName;
+
     private ProjectSession? _currentSession;
-    private TrackingState _state = TrackingState.NotTracking;
-    private DateTime? _sessionStartTime;     // When GraceStart began
-    private DateTime? _graceEndStartTime;    // When GraceEnd began
-    private DateTime? _lastActivityDuringGraceStart;  // Track if user was active during GraceStart
+    private TrackingState   _state = TrackingState.NotTracking;
+    private DateTime?       _sessionStartTime;
+    private DateTime?       _graceEndStartTime;
+    private DateTime?       _lastActivityDuringGraceStart;
 
     public event EventHandler<ProjectSession>? SessionStarted;
     public event EventHandler<ProjectSession>? SessionEnded;
 
-    public TrackingState CurrentState => _state;
-    public string? CurrentProjectName => _currentSession?.ProjectName;
-    public string CurrentUserName => _currentUserName;
-    public DateTime? SessionStartTime => _sessionStartTime;
+    public TrackingState CurrentState    => _state;
+    public string?       CurrentProjectName => _currentSession?.ProjectName;
+    public string        CurrentUserName => _currentUserName;
+    public DateTime?     SessionStartTime => _sessionStartTime;
 
     public TimeSpan? GraceStartElapsedTime => _sessionStartTime.HasValue && _state == TrackingState.GraceStart
-        ? DateTime.UtcNow - _sessionStartTime.Value
-        : null;
+        ? DateTime.UtcNow - _sessionStartTime.Value : null;
 
     public TimeSpan? GraceEndElapsedTime => _graceEndStartTime.HasValue && _state == TrackingState.GraceEnd
-        ? DateTime.UtcNow - _graceEndStartTime.Value
-        : null;
+        ? DateTime.UtcNow - _graceEndStartTime.Value : null;
 
     public SessionManager(ILogger logger)
     {
@@ -38,180 +49,113 @@ public class SessionManager
         _logger.Information("SessionManager initialized for user: {UserName}", _currentUserName);
     }
 
-    public ProjectSession? GetCurrentSession()
+    public ProjectSession? GetCurrentSession() => _currentSession;
+
+    // ── Single entry point: called every 2s by TimeTrackingService ────────────
+
+    /// <summary>
+    /// Evaluates the current world-state snapshot and advances the session state machine.
+    /// This is the only public method that changes state; it replaces all the old
+    /// Handle* methods and CheckStateTransitions.
+    /// </summary>
+    public void Tick(TrackingSnapshot s)
     {
-        return _currentSession;
-    }
-
-    // ============ PUBLIC EVENT HANDLERS ============
-
-    public void HandleProjectChanged(string projectName)
-    {
-        _logger.Information("HandleProjectChanged: {ProjectName}, CurrentState: {State}", projectName, _state);
-
-        // End old session if exists
-        if (_currentSession != null)
+        // STEP 1 — project identity change only ENDS the current session.
+        // Starting is gated by the NotTracking branch below (focus + active required),
+        // which avoids churning throwaway GraceStarts while the user is away.
+        if (_currentSession != null && s.Project != _currentSession.ProjectName)
         {
-            EndCurrentSession();
+            _logger.Information("Tick: project changed from '{Old}' to '{New}' — ending current session",
+                _currentSession.ProjectName, s.Project);
+            EndCurrentSession(); // sets state = NotTracking
         }
 
-        // Start new session in GraceStart state
-        StartSession(projectName);
-    }
-
-    public void HandleProjectClosed()
-    {
-        _logger.Information("HandleProjectClosed, CurrentState: {State}", _state);
-        ProcessEndTrigger();
-    }
-
-    public void HandleFocusLost(bool isRendering = false)
-    {
-        _logger.Information("HandleFocusLost, CurrentState: {State}", _state);
-        if (isRendering && (_state == TrackingState.Tracking || _state == TrackingState.GraceEnd))
-        {
-            _logger.Debug("HandleFocusLost suppressed — rendering in progress, session stays active");
-            return;
-        }
-        ProcessEndTrigger();
-    }
-
-    public void HandleFocusGained(string? projectName, bool isUserActive)
-    {
-        _logger.Information("HandleFocusGained, Project: {Project}, Active: {Active}, CurrentState: {State}",
-            projectName, isUserActive, _state);
+        // STEP 2 — evaluate the (possibly just-updated) state against the snapshot.
+        var now = DateTime.UtcNow;
 
         switch (_state)
         {
             case TrackingState.NotTracking:
-                // Start new session if conditions are met
-                if (projectName != null && isUserActive)
+                if (s.Project != null)
                 {
-                    StartSession(projectName);
+                    if (s.IsRendering)
+                    {
+                        // Render in progress → start immediately and bypass GraceStart.
+                        // A render is unambiguous intentional work; no focus/activity gate needed.
+                        _logger.Information("Rendering detected — starting session immediately (bypassing GraceStart)");
+                        StartSession(s.Project);
+                        _lastActivityDuringGraceStart = now; // satisfy the activity guard
+                        TransitionToTracking();
+                    }
+                    else if (s.IsInFocus && s.IsUserActive)
+                    {
+                        StartSession(s.Project);
+                    }
                 }
                 break;
-            case TrackingState.GraceEnd:
-                // Exit grace period, return to Tracking
-                if (isUserActive)
-                {
-                    ExitGracePeriod();
-                }
-                break;
-        }
-    }
 
-    public void HandleUserIdle(bool isRendering = false)
-    {
-        _logger.Information("HandleUserIdle, CurrentState: {State}", _state);
-        if (isRendering && (_state == TrackingState.Tracking || _state == TrackingState.GraceEnd))
-        {
-            _logger.Debug("HandleUserIdle suppressed — rendering in progress, session stays active");
-            return;
-        }
-        ProcessEndTrigger();
-    }
-
-    /// <summary>
-    /// Called when DaVinci starts rendering. If we slipped into GraceEnd (e.g. idle fired
-    /// just before the render was detected), kick back to Tracking immediately.
-    /// </summary>
-    public void HandleRenderingStarted()
-    {
-        _logger.Information("HandleRenderingStarted, CurrentState: {State}", _state);
-        if (_state == TrackingState.GraceEnd)
-        {
-            _logger.Information("Rendering started during GraceEnd — resuming Tracking");
-            ExitGracePeriod();
-        }
-    }
-
-    /// <summary>
-    /// Called when DaVinci finishes rendering. Because idle and focus-loss events are
-    /// edge-triggered and were suppressed during the render, we must re-check conditions
-    /// here. If the user is still away or DaVinci still doesn't have focus, enter GraceEnd
-    /// so the session ends normally rather than staying in Tracking forever.
-    /// </summary>
-    public void HandleRenderingStopped(bool isDaVinciInFocus, bool isUserActive)
-    {
-        _logger.Information("HandleRenderingStopped, CurrentState: {State}, Focus: {Focus}, Active: {Active}",
-            _state, isDaVinciInFocus, isUserActive);
-
-        if (_state == TrackingState.Tracking && (!isDaVinciInFocus || !isUserActive))
-        {
-            _logger.Information("Rendering stopped but user/focus conditions not met — entering GraceEnd");
-            EnterGracePeriod();
-        }
-    }
-
-    public void HandleUserActive()
-    {
-        _logger.Information("HandleUserActive, CurrentState: {State}", _state);
-
-        // Track activity during GraceStart to ensure user is actually present
-        if (_state == TrackingState.GraceStart)
-        {
-            _lastActivityDuringGraceStart = DateTime.UtcNow;
-        }
-
-        switch (_state)
-        {
-            case TrackingState.GraceEnd:
-                // Exit grace period, return to Tracking
-                ExitGracePeriod();
-                break;
-        }
-    }
-
-    // Called periodically by TimeTrackingService timer
-    public void CheckStateTransitions(bool isDaVinciInFocus, bool isUserActive, string? currentProject,
-        bool isRendering = false)
-    {
-        // Track user activity during GraceStart period
-        if (_state == TrackingState.GraceStart && isUserActive)
-        {
-            _lastActivityDuringGraceStart = DateTime.UtcNow;
-        }
-
-        switch (_state)
-        {
             case TrackingState.GraceStart:
+                if (s.IsUserActive)
+                    _lastActivityDuringGraceStart = now;
+
+                // Render starting during GraceStart → no reason to wait, transition immediately
+                if (s.IsRendering && _lastActivityDuringGraceStart == null)
+                    _lastActivityDuringGraceStart = now;
+
                 if (_sessionStartTime.HasValue)
                 {
-                    var graceStartDuration = DateTime.UtcNow - _sessionStartTime.Value;
-                    if (graceStartDuration >= TrackingConfiguration.GraceStartDuration)
-                    {
-                        bool hadActivityDuringGrace = _lastActivityDuringGraceStart.HasValue;
+                    var elapsed = now - _sessionStartTime.Value;
+                    bool hadActivity = _lastActivityDuringGraceStart.HasValue;
 
-                        if (isDaVinciInFocus && currentProject != null && hadActivityDuringGrace)
+                    if (s.IsRendering && hadActivity)
+                    {
+                        // Skip the remainder of GraceStart — render is confirmation enough
+                        _logger.Information("Rendering started during GraceStart — skipping grace period");
+                        TransitionToTracking();
+                    }
+                    else if (elapsed >= TrackingConfiguration.GraceStartDuration)
+                    {
+                        if (s.IsInFocus && s.Project != null && hadActivity)
                         {
                             TransitionToTracking();
                         }
                         else
                         {
-                            _logger.Information("GraceStart expired but conditions not valid (Focus: {Focus}, Project: {Project}, HadActivity: {HadActivity}) - ending session",
-                                isDaVinciInFocus, currentProject != null, hadActivityDuringGrace);
+                            _logger.Information(
+                                "GraceStart expired — conditions not valid " +
+                                "(Focus: {Focus}, Project: {Project}, HadActivity: {HadActivity}) — ending session",
+                                s.IsInFocus, s.Project != null, hadActivity);
                             EndCurrentSession();
                         }
                     }
                 }
                 break;
 
+            case TrackingState.Tracking:
+                // Rendering keeps the session in Tracking regardless of focus/activity.
+                if (!s.IsRendering && (!s.IsInFocus || !s.IsUserActive))
+                    EnterGracePeriod();
+                break;
+
             case TrackingState.GraceEnd:
-                if (_graceEndStartTime.HasValue)
+                if (s.IsInFocus && s.IsUserActive)
                 {
-                    var graceEndDuration = DateTime.UtcNow - _graceEndStartTime.Value;
-                    if (graceEndDuration >= TrackingConfiguration.GraceEndDuration)
+                    ExitGracePeriod();
+                }
+                else if (_graceEndStartTime.HasValue)
+                {
+                    var graceElapsed = now - _graceEndStartTime.Value;
+                    if (graceElapsed >= TrackingConfiguration.GraceEndDuration)
                     {
-                        if (isRendering)
+                        if (s.IsRendering)
                         {
-                            // DaVinci is rendering — the UI is blocked and the user can't work.
-                            // Reset the grace clock so the session doesn't expire during a render.
-                            _graceEndStartTime = DateTime.UtcNow;
-                            _logger.Debug("GraceEnd clock reset — rendering in progress, keeping session alive");
+                            // Hold the clock: render keeps session alive even in GraceEnd
+                            _graceEndStartTime = now;
+                            _logger.Debug("GraceEnd clock reset — rendering in progress");
                         }
                         else
                         {
-                            _logger.Information("Grace period expired ({Duration}) - ending session",
+                            _logger.Information("Grace period expired ({Duration}) — ending session",
                                 TrackingConfiguration.GraceEndDuration);
                             EndCurrentSession();
                         }
@@ -221,47 +165,26 @@ public class SessionManager
         }
     }
 
-    // ============ INTERNAL STATE TRANSITIONS ============
-
-    private void ProcessEndTrigger()
-    {
-        switch (_state)
-        {
-            case TrackingState.GraceStart:
-                // Immediate end (no grace protection)
-                EndCurrentSession();
-                break;
-            case TrackingState.Tracking:
-                // Enter grace period
-                EnterGracePeriod();
-                break;
-            case TrackingState.GraceEnd:
-                // Already in grace, do nothing
-                break;
-        }
-    }
+    // ── Internal state transitions (unchanged from original) ──────────────────
 
     private void StartSession(string projectName)
     {
-        // Don't create ProjectSession yet - wait until GraceStart completes
-        // Store the project name temporarily
         _currentSession = new ProjectSession
         {
-            Id = Guid.NewGuid(),
+            Id          = Guid.NewGuid(),
             ProjectName = projectName,
-            UserName = _currentUserName,
-            StartTime = DateTime.MinValue, // Placeholder - will be set in TransitionToTracking
-            FlushedEnd = null
+            UserName    = _currentUserName,
+            StartTime   = DateTime.MinValue,
+            FlushedEnd  = null
         };
 
-        _sessionStartTime = DateTime.UtcNow;
-        _graceEndStartTime = null;
-        _lastActivityDuringGraceStart = null; // Reset activity tracking for new grace period
+        _sessionStartTime             = DateTime.UtcNow;
+        _graceEndStartTime            = null;
+        _lastActivityDuringGraceStart = null;
         _state = TrackingState.GraceStart;
 
         _logger.Information("Entered GraceStart for project: {ProjectName}, user: {UserName} (not tracking yet)",
             projectName, _currentUserName);
-        // Don't fire SessionStarted yet - wait until we transition to Tracking
     }
 
     private void TransitionToTracking()
@@ -271,22 +194,18 @@ public class SessionManager
             _logger.Warning("TransitionToTracking called from invalid state: {State}", _state);
             return;
         }
-
         if (_currentSession == null || _sessionStartTime == null)
         {
-            _logger.Error("TransitionToTracking called but session or start time is null");
+            _logger.Error("TransitionToTracking: session or start time is null");
             return;
         }
 
-        // NOW we officially start tracking - set the actual StartTime retroactively to when GraceStart began
         _currentSession.StartTime = _sessionStartTime.Value;
         _state = TrackingState.Tracking;
 
-        _logger.Information("Transitioned to Tracking for project: {ProjectName} ({Duration} elapsed, tracking starts from GraceStart time)",
-            _currentSession.ProjectName,
-            TrackingConfiguration.GraceStartDuration);
+        _logger.Information("Transitioned to Tracking for project: {ProjectName}",
+            _currentSession.ProjectName);
 
-        // Fire SessionStarted event NOW (not during GraceStart)
         SessionStarted?.Invoke(this, _currentSession);
     }
 
@@ -300,7 +219,7 @@ public class SessionManager
 
         _graceEndStartTime = DateTime.UtcNow;
         _state = TrackingState.GraceEnd;
-        _logger.Information("Entered grace period ({Duration}) - time continues to accumulate",
+        _logger.Information("Entered grace period ({Duration}) — time continues to accumulate",
             TrackingConfiguration.GraceEndDuration);
     }
 
@@ -314,46 +233,37 @@ public class SessionManager
 
         _graceEndStartTime = null;
         _state = TrackingState.Tracking;
-        _logger.Information("Exited grace period - resumed normal tracking");
+        _logger.Information("Exited grace period — resumed normal tracking");
     }
 
     private void EndCurrentSession()
     {
-        if (_currentSession == null)
-        {
-            return;
-        }
+        if (_currentSession == null) return;
 
-        // Check if we're ending during GraceStart (before actual tracking began)
         var wasInGraceStart = _state == TrackingState.GraceStart;
 
         if (wasInGraceStart)
         {
-            // Exiting during GraceStart - no tracking should occur
-            _logger.Information("Exited during GraceStart for project: {ProjectName} - no session recorded",
+            _logger.Information("Exited during GraceStart for project: {ProjectName} — no session recorded",
                 _currentSession.ProjectName);
-
-            // Don't fire SessionEnded event - session never truly started
-            _currentSession = null;
-            _sessionStartTime = null;
-            _graceEndStartTime = null;
+            _currentSession               = null;
+            _sessionStartTime             = null;
+            _graceEndStartTime            = null;
             _lastActivityDuringGraceStart = null;
             _state = TrackingState.NotTracking;
             return;
         }
 
-        // Normal session end (was in Tracking or GraceEnd state)
         _currentSession.EndTime = DateTime.UtcNow;
-
         _logger.Information("Ended session: {ProjectName} (Duration: {Duration})",
             _currentSession.ProjectName,
             _currentSession.EndTime.Value - _currentSession.StartTime);
 
         SessionEnded?.Invoke(this, _currentSession);
 
-        _currentSession = null;
-        _sessionStartTime = null;
-        _graceEndStartTime = null;
+        _currentSession               = null;
+        _sessionStartTime             = null;
+        _graceEndStartTime            = null;
         _lastActivityDuringGraceStart = null;
         _state = TrackingState.NotTracking;
     }
