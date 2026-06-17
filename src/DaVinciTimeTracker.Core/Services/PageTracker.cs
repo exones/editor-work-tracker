@@ -57,15 +57,37 @@ public sealed class PageTracker : IDisposable
     {
         var snap = _context.Snapshot();
         var page = snap.Page;
+
         if (page != null)
         {
+            // Normal case: DaVinci is focused, page is known
             _pendingSession = null;
             _logger.Information("PageTracker: session started — page '{Page}' timeline '{Timeline}'",
                 page, snap.Timeline);
             OpenEntry(session, page, snap.Timeline, snap.IsRendering);
         }
+        else if (snap.IsRendering)
+        {
+            // Render in progress but page is null (DaVinci in background — GetCurrentPage returns null).
+            // Rendering always originates from the Deliver page; open a deliver/render entry
+            // retroactively from session start so render time is tracked from the beginning.
+            _pendingSession = null;
+            _logger.Information("PageTracker: session started during render (page unknown) — opening deliver/render entry retroactively");
+            _currentEntry = new PageTimeEntry
+            {
+                Id           = Guid.NewGuid(),
+                SessionId    = session.Id,
+                ProjectName  = session.ProjectName,
+                UserName     = session.UserName,
+                Page         = "deliver",
+                TimelineName = snap.Timeline,
+                IsRendering  = true,
+                StartTime    = session.StartTime  // retroactive to session start
+            };
+        }
         else
         {
+            // Page unknown, not rendering — defer until first PageChanged fires
             _logger.Information("PageTracker: session started, page unknown (DaVinci in background) — deferring first entry");
             _pendingSession = session;
         }
@@ -108,6 +130,29 @@ public sealed class PageTracker : IDisposable
 
     private void OnRenderingStarted(object? sender, EventArgs e)
     {
+        // Special case: session started while DaVinci was rendering in background.
+        // GetCurrentPage() returns null during render, so PageChanged never fires and
+        // _pendingSession never resolves. Open the render entry retroactively now.
+        if (_pendingSession is not null)
+        {
+            var session = _pendingSession;
+            var snap    = _context.Snapshot();
+            _pendingSession = null;
+            _logger.Information("PageTracker: rendering started with pending session — opening deferred render entry");
+            _currentEntry = new PageTimeEntry
+            {
+                Id           = Guid.NewGuid(),
+                SessionId    = session.Id,
+                ProjectName  = session.ProjectName,
+                UserName     = session.UserName,
+                Page         = "deliver",  // rendering always originates from the Deliver page
+                TimelineName = snap.Timeline,
+                IsRendering  = true,
+                StartTime    = session.StartTime  // retroactive to session start
+            };
+            return;
+        }
+
         if (_currentEntry is null) return;
 
         _logger.Information("PageTracker: rendering started on page '{Page}' — rotating to render entry",
