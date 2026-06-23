@@ -922,7 +922,7 @@ async function fetchBridgeHealth() {
         const res = await fetch(`${API_BASE}/api/health`);
         if (!res.ok) { setBridgeHealth('red', 'Cannot reach app'); return; }
         const h = await res.json();
-        const color = h.level === 0 ? 'green' : h.level === 1 ? 'amber' : 'red';
+        const color = h.level === 'Green' ? 'green' : h.level === 'Amber' ? 'amber' : 'red';
         setBridgeHealth(color, h.summary);
     } catch {
         setBridgeHealth('red', 'App not reachable');

@@ -20,7 +20,7 @@ public sealed class ResolveDiagnosticsService
     private readonly IResolvePlatform _platform;
     private readonly ISystemActivityProvider _activity;
     private readonly NodeToggleApiClient _nodeToggleClient;
-    private readonly string _pythonPath;
+    private string _pythonPath;
     private readonly ILogger _logger;
 
     public ResolveDiagnosticsService(
@@ -36,6 +36,12 @@ public sealed class ResolveDiagnosticsService
         _pythonPath = pythonPath;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Updates the Python path after the resolver has selected a compatible interpreter.
+    /// Called from Program.cs once Python detection completes.
+    /// </summary>
+    public void UpdatePythonPath(string pythonPath) => _pythonPath = pythonPath;
 
     public async Task<List<CheckResult>> RunAllAsync()
     {

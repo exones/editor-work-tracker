@@ -64,11 +64,12 @@ try
         "", "", AppPaths.NodeToggleConfigPath, Log.Logger);
     AppState.NodeToggleService = nodeToggleService;
 
-    // DiagnosticsService placeholder — real instance (with resolved Python) created after Python detection
+    // DiagnosticsService — single instance; pythonPath updated after detection via UpdatePythonPath()
     var platform = ResolvePlatformFactory.Create();
-    AppState.DiagnosticsService = new ResolveDiagnosticsService(
+    var diagnosticsServiceEarly = new ResolveDiagnosticsService(
         platform, SystemActivityProviderFactory.Create(Log.Logger),
         nodeToggleService.GetApiClient(), "", Log.Logger);
+    AppState.DiagnosticsService = diagnosticsServiceEarly;
 
     // Load user settings before the web server and tracking components start
     var userSettingsService = new UserSettingsService(AppPaths.UserSettingsPath, Log.Logger);
@@ -255,17 +256,9 @@ try
         }
     };
 
-    // Now that Python is resolved, wire the correct executable into NodeToggleService
+    // Now that Python is resolved, wire the correct executable into NodeToggleService and diagnostics
     nodeToggleService.SetPythonExecutable(pythonPath, AppPaths.NodeToggleScriptPath);
-
-    // Diagnostics service — needs the resolved Python and the live NodeToggleApiClient
-    var diagnosticsService = new ResolveDiagnosticsService(
-        ResolvePlatformFactory.Create(),
-        systemActivity,
-        nodeToggleService.GetApiClient(),
-        pythonPath,
-        Log.Logger);
-    AppState.DiagnosticsService = diagnosticsService;
+    diagnosticsServiceEarly.UpdatePythonPath(pythonPath);
     var hotkeyManager = HotkeyManagerFactory.Create(Log.Logger);
     hotkeyManager.Reload(nodeToggleService.GetAll());
     nodeToggleService.ConfigChanged += groups => hotkeyManager.Reload(groups);
