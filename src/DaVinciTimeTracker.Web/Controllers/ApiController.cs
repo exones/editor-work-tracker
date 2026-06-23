@@ -1,3 +1,4 @@
+using DaVinciTimeTracker.Core.Models;
 using DaVinciTimeTracker.Core.NodeToggle;
 using DaVinciTimeTracker.Core.Services;
 using DaVinciTimeTracker.Data.Repositories;
@@ -9,24 +10,30 @@ namespace DaVinciTimeTracker.Web.Controllers;
 [Route("api")]
 public class ApiController : ControllerBase
 {
-    private readonly SessionRepository _repository;
-    private readonly StatisticsService _statisticsService;
-    private readonly SessionManager    _sessionManager;
-    private readonly NodeToggleService _nodeToggleService;
-    private readonly TrackingContext   _trackingContext;
+    private readonly SessionRepository   _repository;
+    private readonly ProjectRepository   _projectRepository;
+    private readonly StatisticsService   _statisticsService;
+    private readonly SessionManager      _sessionManager;
+    private readonly NodeToggleService   _nodeToggleService;
+    private readonly TrackingContext     _trackingContext;
+    private readonly UserSettingsService _userSettingsService;
 
     public ApiController(
         SessionRepository repository,
+        ProjectRepository projectRepository,
         StatisticsService statisticsService,
         SessionManager sessionManager,
         NodeToggleService nodeToggleService,
-        TrackingContext trackingContext)
+        TrackingContext trackingContext,
+        UserSettingsService userSettingsService)
     {
-        _repository      = repository;
-        _statisticsService = statisticsService;
-        _sessionManager  = sessionManager;
-        _nodeToggleService = nodeToggleService;
-        _trackingContext  = trackingContext;
+        _repository          = repository;
+        _projectRepository   = projectRepository;
+        _statisticsService   = statisticsService;
+        _sessionManager      = sessionManager;
+        _nodeToggleService   = nodeToggleService;
+        _trackingContext     = trackingContext;
+        _userSettingsService = userSettingsService;
     }
 
     [HttpGet("projects")]
@@ -36,8 +43,12 @@ public class ApiController : ControllerBase
         Response.Headers.ContentType = "application/json; charset=utf-8";
         var sessions         = await _repository.GetAllSessionsAsync();
         var activityEntries  = await _repository.GetAllActivitiesAsync();
+        var projects         = await _projectRepository.GetAllAsync();
         var currentUserName  = _sessionManager.CurrentUserName;
-        var stats = _statisticsService.CalculateStatistics(sessions, activityEntries, _sessionManager.CurrentProjectName, currentUserName);
+        var billing          = _userSettingsService.Current.Billing;
+        var stats = _statisticsService.CalculateStatistics(
+            sessions, activityEntries, _sessionManager.CurrentProjectName,
+            currentUserName, billing, projects);
 
         // Add current state information to the currently tracking project for current user
         foreach (var stat in stats)
@@ -91,6 +102,59 @@ public class ApiController : ControllerBase
         {
             var deletedCount = await _repository.DeleteProjectSessionsAsync(name);
             return Ok(new { success = true, deletedSessions = deletedCount, message = $"Deleted {deletedCount} session(s)" });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    // ── Settings endpoints ────────────────────────────────────────────────────
+
+    [HttpGet("settings")]
+    [Produces("application/json")]
+    public IActionResult GetSettings()
+    {
+        return Ok(_userSettingsService.Current);
+    }
+
+    [HttpPost("settings")]
+    public IActionResult SaveSettings([FromBody] UserSettings settings)
+    {
+        try
+        {
+            _userSettingsService.Save(settings);
+            return Ok(new { success = true });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    // ── Project billing endpoints ─────────────────────────────────────────────
+
+    [HttpPost("projects/{name}/billing")]
+    public async Task<IActionResult> SetProjectBilling(string name, [FromBody] SetBillingRequest body)
+    {
+        try
+        {
+            await _projectRepository.SetBilledAmountAsync(name, body.Amount);
+            return Ok(new { success = true });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpDelete("projects/{name}/billing")]
+    public async Task<IActionResult> ClearProjectBilling(string name)
+    {
+        try
+        {
+            await _projectRepository.SetBilledAmountAsync(name, null);
+            return Ok(new { success = true });
         }
         catch (Exception ex)
         {
@@ -223,3 +287,5 @@ public class ApiController : ControllerBase
         }
     }
 }
+
+public record SetBillingRequest(decimal? Amount);

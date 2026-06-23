@@ -877,3 +877,220 @@ footer {
 .notification-info {
   background: #667eea;
 }
+
+/* ── Cost display in user row ────────────────────────────────────────────── */
+
+.user-cost-sep {
+  font-size: 0.85rem;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.user-cost {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #667eea;
+}
+
+/* ── Project billing row ─────────────────────────────────────────────────── */
+
+.project-billing-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px 0 8px;
+  border-bottom: 1px dashed #e2e8f0;
+  margin-bottom: 10px;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.billing-label {
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+}
+
+.billing-value {
+  font-weight: 700;
+  color: #334155;
+}
+
+.billing-billed-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.billing-billed-display {
+  font-weight: 700;
+  color: #334155;
+  cursor: pointer;
+  border-bottom: 1px dashed #94a3b8;
+}
+
+.billing-billed-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.billing-input {
+  width: 80px;
+  padding: 2px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.billing-diff {
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.billing-overshoot {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.billing-undershoot {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.billing-on-target {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+/* ── Settings tab ────────────────────────────────────────────────────────── */
+
+.settings-section {
+  padding: 0;
+}
+
+.settings-form {
+  max-width: 680px;
+  padding: 30px;
+}
+
+.settings-section-header h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 4px;
+}
+
+.settings-section-header {
+  margin-bottom: 20px;
+}
+
+.settings-restart-banner {
+  font-size: 0.8rem;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 6px 12px;
+  display: inline-block;
+  margin-top: 4px;
+}
+
+.settings-divider {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 28px 0;
+}
+
+.settings-field {
+  margin-bottom: 20px;
+}
+
+.settings-field label {
+  display: block;
+  font-weight: 600;
+  color: #334155;
+  font-size: 0.9rem;
+  margin-bottom: 4px;
+}
+
+.settings-unit {
+  font-weight: 400;
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.settings-hint {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.settings-input {
+  padding: 7px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  width: 120px;
+  transition: border-color 0.15s;
+}
+
+.settings-input-sm {
+  width: 80px;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.15);
+}
+
+.settings-rates-table {
+  width: 100%;
+  max-width: 420px;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.settings-rates-table th {
+  text-align: left;
+  font-weight: 600;
+  color: #64748b;
+  padding: 4px 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.settings-rates-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.kind-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.kind-badge.user {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.kind-badge.processing {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.settings-actions {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid #e2e8f0;
+}

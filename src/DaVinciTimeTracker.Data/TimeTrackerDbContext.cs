@@ -7,6 +7,7 @@ public class TimeTrackerDbContext : DbContext
 {
     public DbSet<ProjectSession> ProjectSessions { get; set; }
     public DbSet<ActivityEntry> ActivityEntries { get; set; }
+    public DbSet<Project> Projects { get; set; }
 
     public TimeTrackerDbContext(DbContextOptions<TimeTrackerDbContext> options)
         : base(options)
@@ -23,6 +24,13 @@ public class TimeTrackerDbContext : DbContext
             entity.Property(e => e.StartTime).IsRequired();
 
             entity.HasIndex(e => e.UserName);
+        });
+
+        modelBuilder.Entity<Project>(entity =>
+        {
+            entity.HasKey(e => e.ProjectName);
+            entity.Property(e => e.ProjectName).IsRequired();
+            entity.Property(e => e.CreatedAt).IsRequired();
         });
 
         modelBuilder.Entity<ActivityEntry>(entity =>

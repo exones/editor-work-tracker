@@ -16,6 +16,15 @@ public class ProjectStatistics
     public TimeSpanDto TotalProcessingTime { get; set; } = null!;
     /// <summary>Time breakdown per activity type, sorted by total time descending.</summary>
     public List<ActivityTimeStat> ActivityBreakdown { get; set; } = [];
+
+    /// <summary>Total calculated cost across all activities. Null when no billing rates are configured.</summary>
+    public decimal? TotalCost { get; set; }
+
+    /// <summary>Currency code from billing settings (e.g. "CHF"). Null when no rates configured.</summary>
+    public string? Currency { get; set; }
+
+    /// <summary>Amount actually billed to the client. Null if not set. Project-level — same for all users.</summary>
+    public decimal? BilledAmount { get; set; }
 }
 
 public class ActivityTimeStat
@@ -37,6 +46,9 @@ public class ActivityTimeStat
 
     /// <summary>Distinct timeline names seen during this activity, for tooltip display.</summary>
     public List<string> Timelines { get; set; } = [];
+
+    /// <summary>Calculated cost for this activity type. Null when no rate is configured for it.</summary>
+    public decimal? Cost { get; set; }
 }
 
 public class TimeSpanDto

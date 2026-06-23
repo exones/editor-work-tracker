@@ -57,6 +57,10 @@ public class SessionRepository
             .ToListAsync();
         _context.ActivityEntries.RemoveRange(activityEntries);
 
+        // Also delete the Projects metadata row
+        var project = await _context.Projects.FirstOrDefaultAsync(p => p.ProjectName == projectName);
+        if (project != null) _context.Projects.Remove(project);
+
         await _context.SaveChangesAsync();
         return sessionsToDelete.Count;
     }

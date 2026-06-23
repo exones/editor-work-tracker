@@ -143,7 +143,7 @@ function renderProjects(projects) {
                         }
                     }
                     
-                    const activityBreakdownHtml = renderActivityBreakdown(user.activityBreakdown);
+                    const activityBreakdownHtml = renderActivityBreakdown(user.activityBreakdown, user.currency);
 
                     return `
                         <div class="user-stat ${isCurrentUser ? 'current-user' : ''}">
@@ -160,6 +160,10 @@ function renderProjects(projects) {
                                     <span class="user-processing-time" title="Time waiting for processing (renders, etc.) to complete">${formatTimeSpan(user.totalProcessingTime.totalSeconds)}</span>
                                     <span class="user-processing-label">processing</span>
                                 ` : ''}
+                                ${user.totalCost != null && user.totalCost > 0 ? `
+                                    <span class="user-cost-sep">=</span>
+                                    <span class="user-cost" title="Calculated cost based on billing rates">${formatCost(user.totalCost, user.currency)}</span>
+                                ` : ''}
                                 <span class="user-sessions">${user.sessionCount} session${user.sessionCount !== 1 ? 's' : ''}</span>
                                 <span class="user-last-activity">${formatLastActivity(user.lastActivity)}</span>
                             </div>
@@ -168,6 +172,13 @@ function renderProjects(projects) {
                     `;
                 })
                 .join("");
+
+            // Project-level billing row
+            const calculatedTotal = projectGroup.users.reduce((sum, u) => sum + (u.totalCost || 0), 0);
+            const currency        = projectGroup.users.find(u => u.currency)?.currency || '';
+            const billedAmount    = projectGroup.users[0]?.billedAmount ?? null;
+            const billingRowHtml  = renderProjectBillingRow(
+                escapeHtml(projectGroup.projectName), calculatedTotal, currency, billedAmount);
 
             return `
                 <div class="project-card ${cardClass}">
@@ -179,6 +190,7 @@ function renderProjects(projects) {
                             🗑️
                         </button>
                     </div>
+                    ${billingRowHtml}
                     <div class="users-container">
                         ${usersHtml}
                     </div>
@@ -223,7 +235,7 @@ const ACTIVITY_LABELS = {
     render:    "Render",
 };
 
-function renderActivityBreakdown(breakdown) {
+function renderActivityBreakdown(breakdown, currency) {
     if (!breakdown || breakdown.length === 0) return "";
 
     const chips = breakdown.map(a => {
@@ -238,6 +250,7 @@ function renderActivityBreakdown(breakdown) {
         // Build tooltip
         const kindLabel = isProcessing ? "processing" : "active";
         let tooltip = `${label}: ${displayTime} ${kindLabel} (${a.percentage}%)`;
+        if (a.cost != null && a.cost > 0) tooltip += `\n${formatCost(a.cost, currency)}`;
         if (timelines) tooltip += `\n${timelines}`;
 
         if (isProcessing) {
@@ -343,7 +356,8 @@ function switchTab(name, btn) {
     document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
     document.getElementById(`tab-${name}`).style.display = "block";
     btn.classList.add("active");
-    if (name === "toggles") fetchNodeToggles();
+    if (name === "toggles")  fetchNodeToggles();
+    if (name === "settings") fetchSettings();
 }
 
 // ── Initial load ──────────────────────────────────────────────────────────────
@@ -658,3 +672,241 @@ document.addEventListener("DOMContentLoaded", () => {
         if (e.target === toggleModal) hideToggleModal();
     });
 });
+
+// ── Billing helpers ───────────────────────────────────────────────────────────
+
+function formatCost(amount, currency) {
+    if (amount == null) return '';
+    const sym = currency || '';
+    return `${sym} ${Number(amount).toFixed(2)}`.trim();
+}
+
+// ── Project billing row ───────────────────────────────────────────────────────
+
+function renderProjectBillingRow(projectNameEscaped, calculatedTotal, currency, billedAmount) {
+    const hasCalc   = calculatedTotal > 0 && currency;
+    const hasBilled = billedAmount != null;
+
+    if (!hasCalc && !hasBilled) return ''; // nothing to show
+
+    const calcHtml = hasCalc
+        ? `<span class="billing-label">Calculated</span><span class="billing-value">${formatCost(calculatedTotal, currency)}</span>`
+        : '';
+
+    const billedVal  = hasBilled ? Number(billedAmount).toFixed(2) : '';
+    const billedHtml = `
+        <span class="billing-label">Billed</span>
+        <span class="billing-billed-wrap" id="billing-wrap-${projectNameEscaped}">
+            <span class="billing-billed-display" onclick="startEditBilling('${projectNameEscaped}', ${billedVal || 'null'})"
+                  title="Click to edit">${hasBilled ? formatCost(billedAmount, currency) : '<em class="muted">not set</em>'} ✎</span>
+            <span class="billing-billed-edit" style="display:none">
+                <input type="number" class="billing-input" id="billing-input-${projectNameEscaped}"
+                    value="${billedVal}" min="0" step="0.01" placeholder="0.00" />
+                <button class="btn btn-sm btn-primary" onclick="saveBilling('${projectNameEscaped}', '${currency}')">✓</button>
+                <button class="btn btn-sm btn-secondary" onclick="cancelEditBilling('${projectNameEscaped}')">✕</button>
+            </span>
+        </span>`;
+
+    let diffHtml = '';
+    if (hasCalc && hasBilled) {
+        const diff = Number(billedAmount) - calculatedTotal;
+        const absDiff = Math.abs(diff).toFixed(2);
+        if (diff > 0.01) {
+            diffHtml = `<span class="billing-diff billing-overshoot" title="Billed more than calculated — good">↑ +${currency} ${absDiff} overshoot</span>`;
+        } else if (diff < -0.01) {
+            diffHtml = `<span class="billing-diff billing-undershoot" title="Billed less than calculated">↓ -${currency} ${absDiff} undershoot</span>`;
+        } else {
+            diffHtml = `<span class="billing-diff billing-on-target">= on target</span>`;
+        }
+    }
+
+    return `<div class="project-billing-row">${calcHtml}${billedHtml}${diffHtml}</div>`;
+}
+
+function startEditBilling(projectName, currentVal) {
+    const wrap  = document.getElementById(`billing-wrap-${projectName}`);
+    const input = document.getElementById(`billing-input-${projectName}`);
+    wrap.querySelector('.billing-billed-display').style.display = 'none';
+    wrap.querySelector('.billing-billed-edit').style.display    = 'inline-flex';
+    input.value = currentVal != null ? currentVal : '';
+    input.focus();
+}
+
+function cancelEditBilling(projectName) {
+    const wrap = document.getElementById(`billing-wrap-${projectName}`);
+    wrap.querySelector('.billing-billed-display').style.display = 'inline';
+    wrap.querySelector('.billing-billed-edit').style.display    = 'none';
+}
+
+async function saveBilling(projectName, currency) {
+    const input  = document.getElementById(`billing-input-${projectName}`);
+    const valStr = input.value.trim();
+    const amount = valStr === '' ? null : parseFloat(valStr);
+
+    try {
+        if (amount === null) {
+            await fetch(`${API_BASE}/api/projects/${encodeURIComponent(projectName)}/billing`, { method: 'DELETE' });
+        } else {
+            await fetch(`${API_BASE}/api/projects/${encodeURIComponent(projectName)}/billing`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ amount })
+            });
+        }
+        await refresh();
+    } catch (e) {
+        showNotification('Failed to save billed amount', 'error');
+    }
+}
+
+// ── Settings tab ──────────────────────────────────────────────────────────────
+
+const KNOWN_ACTIVITY_TYPES = [
+    { type: 'edit',      kind: 'User',       label: 'Edit'       },
+    { type: 'color',     kind: 'User',       label: 'Color'      },
+    { type: 'cut',       kind: 'User',       label: 'Cut'        },
+    { type: 'deliver',   kind: 'User',       label: 'Deliver'    },
+    { type: 'media',     kind: 'User',       label: 'Media'      },
+    { type: 'fusion',    kind: 'User',       label: 'Fusion'     },
+    { type: 'fairlight', kind: 'User',       label: 'Fairlight'  },
+    { type: 'photo',     kind: 'User',       label: 'Photo'      },
+    { type: 'render',    kind: 'Processing', label: 'Render'     },
+];
+
+async function fetchSettings() {
+    try {
+        const res      = await fetch(`${API_BASE}/api/settings`);
+        const settings = await res.json();
+        renderSettings(settings);
+    } catch (e) {
+        document.getElementById('settings-container').innerHTML =
+            '<p class="loading">Failed to load settings.</p>';
+    }
+}
+
+function renderSettings(s) {
+    const billing = s.billing || {};
+    const rates   = billing.activityTypeRates || {};
+
+    const rateRows = KNOWN_ACTIVITY_TYPES.map(a => {
+        const val = rates[a.type] != null ? rates[a.type] : '';
+        const kindBadge = a.kind === 'Processing'
+            ? '<span class="kind-badge processing">Processing</span>'
+            : '<span class="kind-badge user">User</span>';
+        return `<tr>
+            <td>${a.label} ${kindBadge}</td>
+            <td><input type="number" class="settings-input-sm" id="rate-${a.type}"
+                       value="${val}" min="0" step="0.01" placeholder="(kind default)" /></td>
+        </tr>`;
+    }).join('');
+
+    document.getElementById('settings-container').innerHTML = `
+        <div class="settings-form">
+
+            <div class="settings-section-header">
+                <h3>Tracking</h3>
+                <p class="settings-restart-banner">⚠ Changes to tracking settings require an app restart to take effect.</p>
+            </div>
+
+            <div class="settings-field">
+                <label>Grace Start <span class="settings-unit">seconds</span></label>
+                <p class="settings-hint">How long you must stay focused before a new session is confirmed.</p>
+                <input type="number" id="setting-graceStartSeconds" class="settings-input"
+                       value="${s.graceStartSeconds ?? 30}" min="1" max="300" />
+            </div>
+
+            <div class="settings-field">
+                <label>Grace End <span class="settings-unit">minutes</span></label>
+                <p class="settings-hint">How long a session continues after you stop working before it closes.</p>
+                <input type="number" id="setting-graceEndMinutes" class="settings-input"
+                       value="${s.graceEndMinutes ?? 10}" min="1" max="120" />
+            </div>
+
+            <div class="settings-field">
+                <label>Inactivity Threshold <span class="settings-unit">minutes</span></label>
+                <p class="settings-hint">Minutes of no keyboard/mouse input before you are considered idle.</p>
+                <input type="number" id="setting-inactivityThresholdMinutes" class="settings-input"
+                       value="${s.inactivityThresholdMinutes ?? 1}" min="1" max="60" />
+            </div>
+
+            <hr class="settings-divider" />
+
+            <div class="settings-section-header">
+                <h3>Billing</h3>
+                <p class="settings-hint">Configure hourly rates to calculate project costs. Leave rates at 0 to disable cost display.</p>
+            </div>
+
+            <div class="settings-field">
+                <label>Currency</label>
+                <p class="settings-hint">ISO 4217 code shown on all cost displays (e.g. USD, EUR, CHF).</p>
+                <input type="text" id="setting-currency" class="settings-input settings-input-sm"
+                       value="${billing.currency ?? 'USD'}" maxlength="5" placeholder="USD"
+                       oninput="this.value = this.value.toUpperCase()" />
+            </div>
+
+            <div class="settings-field">
+                <label>Default User activity rate <span class="settings-unit">per hour</span></label>
+                <p class="settings-hint">Applied to any User activity without a specific override below.</p>
+                <input type="number" id="setting-defaultUserRate" class="settings-input"
+                       value="${billing.defaultUserRatePerHour ?? 0}" min="0" step="0.01" />
+            </div>
+
+            <div class="settings-field">
+                <label>Default Processing activity rate <span class="settings-unit">per hour</span></label>
+                <p class="settings-hint">Applied to renders and other machine processing without a specific override.</p>
+                <input type="number" id="setting-defaultProcessingRate" class="settings-input"
+                       value="${billing.defaultProcessingRatePerHour ?? 0}" min="0" step="0.01" />
+            </div>
+
+            <div class="settings-field">
+                <label>Per-activity overrides <span class="settings-unit">per hour</span></label>
+                <p class="settings-hint">Leave blank to use the kind default above.</p>
+                <table class="settings-rates-table">
+                    <thead><tr><th>Activity</th><th>Rate / hour</th></tr></thead>
+                    <tbody>${rateRows}</tbody>
+                </table>
+            </div>
+
+            <div class="settings-actions">
+                <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+            </div>
+        </div>
+    `;
+}
+
+async function saveSettings() {
+    const activityTypeRates = {};
+    KNOWN_ACTIVITY_TYPES.forEach(a => {
+        const val = parseFloat(document.getElementById(`rate-${a.type}`)?.value || '');
+        if (!isNaN(val) && val > 0) activityTypeRates[a.type] = val;
+    });
+
+    const settings = {
+        graceStartSeconds:          parseInt(document.getElementById('setting-graceStartSeconds').value,  10),
+        graceEndMinutes:            parseInt(document.getElementById('setting-graceEndMinutes').value,    10),
+        inactivityThresholdMinutes: parseInt(document.getElementById('setting-inactivityThresholdMinutes').value, 10),
+        billing: {
+            currency:                    document.getElementById('setting-currency').value.trim().toUpperCase() || 'USD',
+            defaultUserRatePerHour:       parseFloat(document.getElementById('setting-defaultUserRate').value)       || 0,
+            defaultProcessingRatePerHour: parseFloat(document.getElementById('setting-defaultProcessingRate').value) || 0,
+            activityTypeRates
+        }
+    };
+
+    try {
+        const res = await fetch(`${API_BASE}/api/settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+        const result = await res.json();
+        if (result.success) {
+            showNotification('Settings saved. Restart the app for tracking changes to take effect.', 'success');
+            renderSettings(settings);
+        } else {
+            showNotification('Failed to save settings', 'error');
+        }
+    } catch (e) {
+        showNotification('Failed to save settings', 'error');
+    }
+}

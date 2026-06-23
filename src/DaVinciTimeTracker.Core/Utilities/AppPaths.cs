@@ -92,4 +92,9 @@ public static class AppPaths
     /// Gets the path to the node toggle JSON config file (user data directory, persists across updates)
     /// </summary>
     public static string NodeToggleConfigPath => Path.Combine(UserDataDirectory, "node-toggles.json");
+
+    /// <summary>
+    /// Gets the path to the user settings JSON file (user data directory, persists across updates)
+    /// </summary>
+    public static string UserSettingsPath => Path.Combine(UserDataDirectory, "user-settings.json");
 }

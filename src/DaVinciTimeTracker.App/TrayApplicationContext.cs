@@ -1,3 +1,4 @@
+using DaVinciTimeTracker.Core.Configuration;
 using DaVinciTimeTracker.Core.Models;
 using DaVinciTimeTracker.Core.Utilities;
 using Microsoft.Toolkit.Uwp.Notifications;
@@ -102,9 +103,10 @@ public class TrayApplicationContext : ApplicationContext
                 break;
             case TrackingState.GraceEnd:
                 var graceTimeRemaining = AppState.SessionManager.GraceEndElapsedTime;
+                var totalGraceMinutes  = TrackingConfiguration.GraceEndDuration.TotalMinutes;
                 var minutesRemaining = graceTimeRemaining.HasValue
-                    ? (int)(10 - graceTimeRemaining.Value.TotalMinutes)
-                    : 10;
+                    ? Math.Max(0, (int)(totalGraceMinutes - graceTimeRemaining.Value.TotalMinutes))
+                    : (int)totalGraceMinutes;
                 _statusItem.Text = $"⏳ Tracking: {projectName} [Grace Period - {minutesRemaining}m]";
                 _trayIcon.Text = $"Tracking: {projectName} [Grace Period - {minutesRemaining}m]";
                 _trayIcon.Icon = _greenIcon; // Keep green during Grace End - we're still tracking

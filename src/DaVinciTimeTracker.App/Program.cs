@@ -1,5 +1,6 @@
 using DaVinciTimeTracker.App;
 using DaVinciTimeTracker.App.Hotkeys;
+using DaVinciTimeTracker.Core.Configuration;
 using DaVinciTimeTracker.Core.Monitors;
 using DaVinciTimeTracker.Core.Models;
 using DaVinciTimeTracker.Core.Native;
@@ -62,6 +63,13 @@ try
         "", "", AppPaths.NodeToggleConfigPath, Log.Logger);
     AppState.NodeToggleService = nodeToggleService;
 
+    // Load user settings before the web server and tracking components start
+    var userSettingsService = new UserSettingsService(AppPaths.UserSettingsPath, Log.Logger);
+    AppState.UserSettingsService = userSettingsService;
+
+    // Wire settings into TrackingConfiguration so grace periods use saved values
+    TrackingConfiguration.Configure(userSettingsService);
+
     // Register app for toast notifications
     ToastNotificationManagerCompat.OnActivated += toastArgs =>
     {
@@ -101,10 +109,12 @@ try
 
         // Services
         builder.Services.AddScoped<SessionRepository>();
+        builder.Services.AddScoped<ProjectRepository>();
         builder.Services.AddSingleton<StatisticsService>();
         builder.Services.AddSingleton<SessionManager>(sp => AppState.SessionManager);
         builder.Services.AddSingleton<NodeToggleService>(sp => AppState.NodeToggleService);
         builder.Services.AddSingleton<TrackingContext>(sp => AppState.TrackingContext);
+        builder.Services.AddSingleton<UserSettingsService>(sp => AppState.UserSettingsService);
 
         builder.WebHost.UseUrls("http://localhost:5555");
 
@@ -210,7 +220,8 @@ try
 
     var resolveApiClient = new ResolveApiClient(pythonPath, scriptPath, Log.Logger);
     var resolveMonitor   = new DaVinciResolveMonitor(resolveApiClient, trackingContext, systemActivity, Log.Logger);
-    var activityMonitor  = new ActivityMonitor(trackingContext, systemActivity, Log.Logger, checkIntervalMs: 5000, inactivityThresholdMinutes: 1);
+    var activityMonitor  = new ActivityMonitor(trackingContext, systemActivity, Log.Logger, checkIntervalMs: 5000,
+        inactivityThresholdMinutes: userSettingsService.Current.InactivityThresholdMinutes);
     // sessionManager was already created before the web server — reuse it
     var timeTrackingService = new TimeTrackingService(resolveMonitor, activityMonitor, sessionManager, trackingContext, Log.Logger);
 
@@ -277,7 +288,21 @@ try
         }
     };
 
-    sessionManager.SessionEnded += async (sender, session) => await saveSession(session);
+    sessionManager.SessionEnded   += async (sender, session) => await saveSession(session);
+
+    // Upsert the Projects row whenever a new session starts (creates the row if first time)
+    sessionManager.SessionStarted += async (sender, session) =>
+    {
+        try
+        {
+            using var dbCtx = new TimeTrackerDbContext(
+                new DbContextOptionsBuilder<TimeTrackerDbContext>()
+                    .UseSqlite(AppPaths.DatabaseConnectionString)
+                    .Options);
+            await new ProjectRepository(dbCtx).UpsertAsync(session.ProjectName);
+        }
+        catch (Exception ex) { Log.Error(ex, "Failed to upsert project row for {ProjectName}", session.ProjectName); }
+    };
 
     // Periodic save every 30 seconds for actively tracking sessions (NOT GraceStart)
     var periodicSaveTimer = new System.Timers.Timer(30000);
@@ -345,9 +370,10 @@ finally
 
 public static class AppState
 {
-    public static TimeTrackingService TimeTrackingService { get; set; } = null!;
-    public static SessionManager      SessionManager      { get; set; } = null!;
-    public static SessionRepository   SessionRepository   { get; set; } = null!;
-    public static NodeToggleService   NodeToggleService   { get; set; } = null!;
-    public static TrackingContext     TrackingContext      { get; set; } = null!;
+    public static TimeTrackingService TimeTrackingService  { get; set; } = null!;
+    public static SessionManager      SessionManager       { get; set; } = null!;
+    public static SessionRepository   SessionRepository    { get; set; } = null!;
+    public static NodeToggleService   NodeToggleService    { get; set; } = null!;
+    public static TrackingContext     TrackingContext       { get; set; } = null!;
+    public static UserSettingsService UserSettingsService  { get; set; } = null!;
 }

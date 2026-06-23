@@ -8,12 +8,20 @@ public class StatisticsService
         List<ProjectSession> sessions,
         List<ActivityEntry> activityEntries,
         string? currentProjectName,
-        string? currentUserName = null)
+        string? currentUserName = null,
+        BillingSettings? billing = null,
+        List<Project>? projects = null)
     {
         // Pre-group activity entries by (ProjectName, UserName) for O(n) lookup
         var entriesByProjectUser = activityEntries
             .GroupBy(a => new { a.ProjectName, a.UserName })
             .ToDictionary(g => g.Key, g => g.ToList());
+
+        // Pre-index projects by name for O(1) lookup
+        var projectsByName = projects?.ToDictionary(p => p.ProjectName, StringComparer.OrdinalIgnoreCase)
+                          ?? new Dictionary<string, Project>();
+
+        var hasBilling = billing is not null && billing.HasAnyRate;
 
         var stats = sessions
             .GroupBy(s => new { s.ProjectName, s.UserName })
@@ -30,7 +38,14 @@ public class StatisticsService
                 var workSeconds       = entries.Where(a => a.Kind == ActivityKind.User).Sum(a => CalculateActivitySeconds(a));
                 var processingSeconds = entries.Where(a => a.Kind == ActivityKind.Processing).Sum(a => CalculateActivitySeconds(a));
 
-                var breakdown = BuildActivityBreakdown(entries, totalSeconds);
+                var breakdown = BuildActivityBreakdown(entries, totalSeconds, hasBilling ? billing : null);
+
+                decimal? totalCost = hasBilling
+                    ? breakdown.Sum(a => a.Cost ?? 0m)
+                    : null;
+                if (totalCost == 0m) totalCost = null;
+
+                projectsByName.TryGetValue(g.Key.ProjectName, out var project);
 
                 return new ProjectStatistics
                 {
@@ -44,7 +59,10 @@ public class StatisticsService
                     SessionCount        = g.Count(),
                     IsCurrentlyTracking = g.Key.ProjectName == currentProjectName
                                        && g.Key.UserName    == currentUserName,
-                    ActivityBreakdown   = breakdown
+                    ActivityBreakdown   = breakdown,
+                    TotalCost           = totalCost,
+                    Currency            = hasBilling ? billing!.Currency : null,
+                    BilledAmount        = project?.BilledAmount
                 };
             })
             .OrderByDescending(s => s.LastActivity)
@@ -54,7 +72,7 @@ public class StatisticsService
     }
 
     private static List<ActivityTimeStat> BuildActivityBreakdown(
-        List<ActivityEntry> entries, long totalProjectSeconds)
+        List<ActivityEntry> entries, long totalProjectSeconds, BillingSettings? billing)
     {
         if (totalProjectSeconds <= 0) return [];
 
@@ -70,9 +88,16 @@ public class StatisticsService
                     .OrderBy(t => t)
                     .ToList();
 
-                // All entries in a group share the same Kind (User or Processing),
-                // so take the kind from the first entry.
+                // All entries in a group share the same Kind.
                 var kind = g.First().Kind;
+
+                decimal? cost = null;
+                if (billing is not null)
+                {
+                    var rate = billing.GetRate(g.Key, kind);
+                    if (rate > 0)
+                        cost = Math.Round((decimal)(totalSecs / 3600.0) * rate, 2);
+                }
 
                 return new ActivityTimeStat
                 {
@@ -80,7 +105,8 @@ public class StatisticsService
                     Kind         = kind,
                     TotalTime    = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(totalSecs)),
                     Percentage   = Math.Round(totalSecs * 100.0 / totalProjectSeconds, 1),
-                    Timelines    = timelines
+                    Timelines    = timelines,
+                    Cost         = cost
                 };
             })
             .Where(a => a.TotalTime.TotalSeconds > 0)

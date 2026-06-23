@@ -19,6 +19,7 @@
             <nav class="tab-bar">
                 <button class="tab active" onclick="switchTab('projects', this)">📊 Projects</button>
                 <button class="tab" onclick="switchTab('toggles', this)">⌨️ Node Toggles</button>
+                <button class="tab" onclick="switchTab('settings', this)">⚙ Settings</button>
             </nav>
 
             <main>
@@ -43,6 +44,14 @@
                     </p>
                     <div id="toggles-container">
                         <p class="loading">Loading...</p>
+                    </div>
+                </div>
+                </div>
+
+                <div id="tab-settings" class="tab-pane" style="display:none">
+                <div class="settings-section">
+                    <div id="settings-container">
+                        <p class="loading">Loading settings...</p>
                     </div>
                 </div>
                 </div>
