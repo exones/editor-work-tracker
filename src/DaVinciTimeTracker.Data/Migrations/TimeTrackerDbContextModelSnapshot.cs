@@ -17,10 +17,14 @@ namespace DaVinciTimeTracker.Data.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.0");
 
-            modelBuilder.Entity("DaVinciTimeTracker.Core.Models.PageTimeEntry", b =>
+            modelBuilder.Entity("DaVinciTimeTracker.Core.Models.ActivityEntry", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActivityType")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("EndTime")
@@ -29,10 +33,7 @@ namespace DaVinciTimeTracker.Data.Migrations
                     b.Property<DateTime?>("FlushedEnd")
                         .HasColumnType("TEXT");
 
-                    b.Property<bool>("IsRendering")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Page")
+                    b.Property<string>("Kind")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
@@ -59,7 +60,7 @@ namespace DaVinciTimeTracker.Data.Migrations
 
                     b.HasIndex("ProjectName", "UserName");
 
-                    b.ToTable("PageTimeEntries");
+                    b.ToTable("ActivityEntries");
                 });
 
             modelBuilder.Entity("DaVinciTimeTracker.Core.Models.ProjectSession", b =>

@@ -142,17 +142,18 @@ private DateTime? _graceEndStartTime;     // When GraceEnd began
 
 #### 5. StatisticsService
 
-**Purpose**: Calculates aggregated statistics from database.
+**Purpose**: Calculates aggregated statistics from sessions and activity entries.
 
 **Responsibilities**:
 
-- Queries `ProjectSession` entities
-- Calculates total active time (on-the-fly from timestamps)
-- Calculates total elapsed time (on-the-fly from timestamps)
-- Groups by project
+- Queries `ProjectSession` and `ActivityEntry` entities
+- Groups by `(ProjectName, UserName)`
+- Computes `TotalWorkTime` = sum of User-kind `ActivityEntry` durations
+- Computes `TotalProcessingTime` = sum of Processing-kind `ActivityEntry` durations (renders, etc.)
+- Builds per-activity-type breakdown (`ActivityBreakdown`) with `ActivityTimeStat` DTOs
 - Returns `ProjectStatistics` DTOs
 
-**Important**: No stored totals - everything calculated from session timestamps.
+**Important**: No stored totals — everything calculated from timestamps on-the-fly. Session durations are used as the percentage denominator and for `TotalElapsedTime`.
 
 **Location**: `src/DaVinciTimeTracker.Core/Services/StatisticsService.cs`
 
@@ -366,24 +367,24 @@ If GraceStart → NotTracking (immediate end)
 ### Dashboard Query Flow
 
 ```
-Browser requests http://localhost:5555/api/statistics
+Browser requests http://localhost:5555/api/projects
   ↓
-ApiController.GetStatistics()
+ApiController.GetProjects()
   ↓
-StatisticsService.GetStatisticsAsync()
+Loads all ProjectSessions + ActivityEntries from SQLite
   ↓
-Queries database:
-  - Groups by ProjectName
-  - Calculates TotalActiveSeconds from (EndTime ?? Now) - StartTime
-  - Calculates TotalElapsedSeconds the same way
-  - Counts sessions
-  - Gets latest session.StartTime as LastActivity
+StatisticsService.CalculateStatistics()
+  ↓
+  - Groups sessions by (ProjectName, UserName)
+  - TotalWorkTime       = sum of User-kind ActivityEntry durations
+  - TotalProcessingTime = sum of Processing-kind ActivityEntry durations
+  - ActivityBreakdown   = per-ActivityType totals + Kind + Percentage + Timelines
   ↓
 Returns List<ProjectStatistics>
   ↓
 JSON response to browser
   ↓
-dashboard.js renders UI
+dashboard.js renders project cards with activity chips
 ```
 
 ## Database Schema
@@ -417,6 +418,25 @@ dashboard.js renders UI
 var endTime = session.EndTime ?? DateTime.UtcNow;
 var activeSeconds = (endTime - session.StartTime).TotalSeconds;
 ```
+
+### ActivityEntries Table
+
+**Entity**: `ActivityEntry` (`src/DaVinciTimeTracker.Core/Models/ActivityEntry.cs`)
+
+| Column         | Type             | Nullable | Description                                                  |
+| -------------- | ---------------- | -------- | ------------------------------------------------------------ |
+| `Id`           | TEXT (GUID)      | NO       | Primary key                                                  |
+| `SessionId`    | TEXT (GUID)      | NO       | Logical FK to ProjectSessions.Id (no constraint)             |
+| `ProjectName`  | TEXT             | NO       | Denormalised for efficient per-project queries               |
+| `UserName`     | TEXT             | NO       | Denormalised for per-user queries                            |
+| `ActivityType` | TEXT             | NO       | Page name ("edit", "color", "deliver", …) or op ("render")   |
+| `Kind`         | TEXT             | NO       | `"User"` or `"Processing"`                                   |
+| `StartTime`    | TEXT (DateTime)  | NO       | Segment start (UTC)                                          |
+| `EndTime`      | TEXT (DateTime)  | YES      | Segment end (UTC), NULL if currently active                  |
+| `FlushedEnd`   | TEXT (DateTime)  | YES      | Last periodic flush for crash recovery                       |
+| `TimelineName` | TEXT             | YES      | Active timeline at time of recording                         |
+
+**Indexes**: `SessionId`; composite `(ProjectName, UserName)`
 
 ### Database Lifecycle
 

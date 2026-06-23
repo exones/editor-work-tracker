@@ -51,49 +51,49 @@ public class SessionRepository
 
         _context.ProjectSessions.RemoveRange(sessionsToDelete);
 
-        // Also delete associated page time entries
-        var pageEntries = await _context.PageTimeEntries
-            .Where(p => p.ProjectName == projectName)
+        // Also delete associated activity entries
+        var activityEntries = await _context.ActivityEntries
+            .Where(a => a.ProjectName == projectName)
             .ToListAsync();
-        _context.PageTimeEntries.RemoveRange(pageEntries);
+        _context.ActivityEntries.RemoveRange(activityEntries);
 
         await _context.SaveChangesAsync();
         return sessionsToDelete.Count;
     }
 
-    // ── PageTimeEntry ─────────────────────────────────────────────────────────
+    // ── ActivityEntry ─────────────────────────────────────────────────────────
 
-    public async Task SavePageEntryAsync(PageTimeEntry entry)
+    public async Task SaveActivityAsync(ActivityEntry entry)
     {
-        var existing = await _context.PageTimeEntries.FirstOrDefaultAsync(p => p.Id == entry.Id);
+        var existing = await _context.ActivityEntries.FirstOrDefaultAsync(a => a.Id == entry.Id);
         if (existing == null)
-            _context.PageTimeEntries.Add(entry);
+            _context.ActivityEntries.Add(entry);
         else
             _context.Entry(existing).CurrentValues.SetValues(entry);
 
         await _context.SaveChangesAsync();
     }
 
-    public async Task<List<PageTimeEntry>> GetPageEntriesByProjectAsync(string projectName)
+    public async Task<List<ActivityEntry>> GetActivitiesByProjectAsync(string projectName)
     {
-        return await _context.PageTimeEntries
-            .Where(p => p.ProjectName == projectName)
+        return await _context.ActivityEntries
+            .Where(a => a.ProjectName == projectName)
             .ToListAsync();
     }
 
-    public async Task<List<PageTimeEntry>> GetAllPageEntriesAsync()
+    public async Task<List<ActivityEntry>> GetAllActivitiesAsync()
     {
-        return await _context.PageTimeEntries.ToListAsync();
+        return await _context.ActivityEntries.ToListAsync();
     }
 
     /// <summary>
-    /// Crash recovery: close any open page entries for the given user.
+    /// Crash recovery: close any open activity entries for the given user.
     /// Synchronous — called during startup before async infrastructure is running.
     /// </summary>
-    public void FinaliseOpenPageEntries(string userName, TimeTrackerDbContext db)
+    public void FinaliseOpenActivities(string userName, TimeTrackerDbContext db)
     {
-        var open = db.PageTimeEntries
-            .Where(p => p.EndTime == null && p.UserName == userName)
+        var open = db.ActivityEntries
+            .Where(a => a.EndTime == null && a.UserName == userName)
             .ToList();
 
         foreach (var entry in open)

@@ -182,8 +182,8 @@ main {
   font-size: 0.95rem;
 }
 
-/* Page breakdown chips */
-.page-chips {
+/* Activity breakdown chips */
+.activity-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
@@ -191,7 +191,7 @@ main {
   justify-content: flex-end;
 }
 
-.page-chip {
+.activity-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -203,14 +203,23 @@ main {
   background: #f1f5f9;
   color: #334155;
   border: 1px solid #e2e8f0;
-  /* modern browsers: tinted chip per page colour */
+  /* modern browsers: tinted chip per activity colour */
   background: color-mix(in srgb, var(--chip-color) 12%, white);
   color: color-mix(in srgb, var(--chip-color) 80%, #1e293b);
   border: 1px solid color-mix(in srgb, var(--chip-color) 30%, transparent);
   white-space: nowrap;
 }
 
-.page-chip-dot {
+/* Processing-kind chips (render, etc.) — muted, visually distinct */
+.activity-chip--processing {
+  background: #f8fafc;
+  color: #64748b;
+  border: 1px dashed #cbd5e1;
+  font-weight: 500;
+  font-style: italic;
+}
+
+.activity-chip-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -218,19 +227,10 @@ main {
   flex-shrink: 0;
 }
 
-.page-chip-meta {
+.activity-chip-meta {
   font-weight: 400;
   opacity: 0.85;
   margin-left: 2px;
-}
-
-.page-chip-render {
-  font-size: 0.67rem;
-  font-weight: 400;
-  opacity: 0.65;
-  margin-left: 5px;
-  font-style: italic;
-  white-space: nowrap;
 }
 
 .user-badge-you {
@@ -277,22 +277,22 @@ main {
   padding-bottom: 2px;
 }
 
-/* divider between active and render */
-.user-render-sep {
+/* divider between active and processing */
+.user-processing-sep {
   font-size: 0.85rem;
   color: #64748b;
   font-weight: 600;
 }
 
-/* render time — same size as active but subdued */
-.user-render-time {
+/* processing time — same size as active but subdued */
+.user-processing-time {
   font-size: 1.05rem;
   font-weight: 600;
   color: #94a3b8;
 }
 
-/* "render" label */
-.user-render-label {
+/* "render" / processing label */
+.user-processing-label {
   font-size: 0.68rem;
   font-weight: 600;
   color: #94a3b8;

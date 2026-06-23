@@ -149,9 +149,9 @@ try
                 Log.Information("Crash recovery complete for user {UserName} - all sessions finalized. Monitoring will resume and detect any active DaVinci projects.", currentUser);
             }
 
-            // Crash recovery: finalize any open page time entries
+            // Crash recovery: finalize any open activity entries
             var tempRepo = new SessionRepository(db);
-            tempRepo.FinaliseOpenPageEntries(currentUser, db);
+            tempRepo.FinaliseOpenActivities(currentUser, db);
         }
 
         app.UseCors();
@@ -214,9 +214,9 @@ try
     // sessionManager was already created before the web server — reuse it
     var timeTrackingService = new TimeTrackingService(resolveMonitor, activityMonitor, sessionManager, trackingContext, Log.Logger);
 
-    // Page time tracking
-    var pageTracker = new PageTracker(resolveMonitor, trackingContext, sessionManager, Log.Logger);
-    pageTracker.PageSegmentEnded += async entry =>
+    // Activity tracking
+    var activityTracker = new ActivityTracker(resolveMonitor, trackingContext, sessionManager, Log.Logger);
+    activityTracker.ActivityEnded += async entry =>
     {
         try
         {
@@ -225,13 +225,13 @@ try
                     .UseSqlite(AppPaths.DatabaseConnectionString)
                     .Options);
             var repo = new SessionRepository(dbCtx);
-            await repo.SavePageEntryAsync(entry);
-            Log.Debug("Page segment saved: {Page} ({Duration:mm\\:ss})",
-                entry.Page, (entry.EndTime ?? DateTime.UtcNow) - entry.StartTime);
+            await repo.SaveActivityAsync(entry);
+            Log.Debug("Activity segment saved: {ActivityType} kind={Kind} ({Duration:mm\\:ss})",
+                entry.ActivityType, entry.Kind, (entry.EndTime ?? DateTime.UtcNow) - entry.StartTime);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to save page time entry");
+            Log.Error(ex, "Failed to save activity entry");
         }
     };
 
@@ -298,9 +298,9 @@ try
                     currentSession.ProjectName, currentState);
             }
 
-            // Also flush the open page entry for crash recovery
-            pageTracker.FlushCurrentEntry();
-            var currentEntry = pageTracker.CurrentEntry;
+            // Flush the open activity entry for crash recovery
+            activityTracker.FlushCurrentEntry();
+            var currentEntry = activityTracker.CurrentEntry;
             if (currentEntry != null)
             {
                 try
@@ -309,9 +309,9 @@ try
                         new DbContextOptionsBuilder<TimeTrackerDbContext>()
                             .UseSqlite(AppPaths.DatabaseConnectionString)
                             .Options);
-                    await new SessionRepository(dbCtx).SavePageEntryAsync(currentEntry);
+                    await new SessionRepository(dbCtx).SaveActivityAsync(currentEntry);
                 }
-                catch (Exception ex) { Log.Error(ex, "Failed to flush page entry"); }
+                catch (Exception ex) { Log.Error(ex, "Failed to flush activity entry"); }
             }
         }
     };
@@ -328,7 +328,7 @@ try
     periodicSaveTimer.Stop();
     periodicSaveTimer.Dispose();
     timeTrackingService.Dispose();
-    pageTracker.Dispose();
+    activityTracker.Dispose();
     hotkeyManager.Dispose();
     nodeToggleService.Dispose();
     Log.Information("DaVinci Time Tracker stopped");

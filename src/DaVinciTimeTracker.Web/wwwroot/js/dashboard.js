@@ -143,7 +143,7 @@ function renderProjects(projects) {
                         }
                     }
                     
-                    const pageBreakdownHtml = renderPageBreakdown(user.pageBreakdown);
+                    const activityBreakdownHtml = renderActivityBreakdown(user.activityBreakdown);
 
                     return `
                         <div class="user-stat ${isCurrentUser ? 'current-user' : ''}">
@@ -155,15 +155,15 @@ function renderProjects(projects) {
                             <div class="user-time-info">
                                 <span class="user-time">${formatTimeSpan((user.totalWorkTime || user.totalElapsedTime).totalSeconds)}</span>
                                 <span class="user-time-label">active</span>
-                                ${user.totalRenderTime && user.totalRenderTime.totalSeconds > 30 ? `
-                                    <span class="user-render-sep">+</span>
-                                    <span class="user-render-time" title="Time waiting for renders to complete">${formatTimeSpan(user.totalRenderTime.totalSeconds)}</span>
-                                    <span class="user-render-label">render</span>
+                                ${user.totalProcessingTime && user.totalProcessingTime.totalSeconds > 30 ? `
+                                    <span class="user-processing-sep">+</span>
+                                    <span class="user-processing-time" title="Time waiting for processing (renders, etc.) to complete">${formatTimeSpan(user.totalProcessingTime.totalSeconds)}</span>
+                                    <span class="user-processing-label">processing</span>
                                 ` : ''}
                                 <span class="user-sessions">${user.sessionCount} session${user.sessionCount !== 1 ? 's' : ''}</span>
                                 <span class="user-last-activity">${formatLastActivity(user.lastActivity)}</span>
                             </div>
-                            ${pageBreakdownHtml}
+                            ${activityBreakdownHtml}
                         </div>
                     `;
                 })
@@ -196,9 +196,9 @@ function formatPageName(page) {
     return map[page] || (page.charAt(0).toUpperCase() + page.slice(1));
 }
 
-// ── Page breakdown ────────────────────────────────────────────────────────────
+// ── Activity breakdown ────────────────────────────────────────────────────────
 
-const PAGE_COLORS = {
+const ACTIVITY_COLORS = {
     color:     "#8b5cf6",   // violet
     edit:      "#3b82f6",   // blue
     cut:       "#06b6d4",   // cyan
@@ -207,10 +207,11 @@ const PAGE_COLORS = {
     fairlight: "#10b981",   // emerald
     deliver:   "#6366f1",   // indigo
     photo:     "#ec4899",   // pink
+    render:    "#94a3b8",   // gray — processing activity
     unknown:   "#94a3b8",   // gray
 };
 
-const PAGE_LABELS = {
+const ACTIVITY_LABELS = {
     color:     "Color",
     edit:      "Edit",
     cut:       "Cut",
@@ -219,36 +220,39 @@ const PAGE_LABELS = {
     fairlight: "Fairlight",
     deliver:   "Deliver",
     photo:     "Photo",
+    render:    "Render",
 };
 
-function renderPageBreakdown(breakdown) {
+function renderActivityBreakdown(breakdown) {
     if (!breakdown || breakdown.length === 0) return "";
 
-    const chips = breakdown.map(p => {
-        const color      = PAGE_COLORS[p.page] || PAGE_COLORS.unknown;
-        const label      = PAGE_LABELS[p.page] || p.page;
-        const totalTime  = formatTimeSpan(p.totalTime.totalSeconds);
-        const renderSecs = p.renderTime ? p.renderTime.totalSeconds : 0;
-        const timelines  = (p.timelines && p.timelines.length > 0)
-            ? p.timelines.join(" · ")
+    const chips = breakdown.map(a => {
+        const isProcessing = a.kind === "Processing";
+        const color        = ACTIVITY_COLORS[a.activityType] || ACTIVITY_COLORS.unknown;
+        const label        = ACTIVITY_LABELS[a.activityType] || a.activityType;
+        const displayTime  = formatTimeSpan(a.totalTime.totalSeconds);
+        const timelines    = (a.timelines && a.timelines.length > 0)
+            ? a.timelines.join(" · ")
             : "";
 
-        // Build tooltip: page, time, timeline names, render info
-        let tooltip = `${label}: ${totalTime} (${p.percentage}%)`;
-        if (timelines)   tooltip += `\n${timelines}`;
-        if (renderSecs > 0) tooltip += `\nincl. ${formatTimeSpan(renderSecs)} rendering`;
+        // Build tooltip
+        const kindLabel = isProcessing ? "processing" : "active";
+        let tooltip = `${label}: ${displayTime} ${kindLabel} (${a.percentage}%)`;
+        if (timelines) tooltip += `\n${timelines}`;
 
-        // Render annotation shown inline when render time is significant (>10s)
-        const renderAnnotation = renderSecs > 10
-            ? `<span class="page-chip-render" title="Time waiting for renders">+${formatTimeSpan(renderSecs)} render</span>`
-            : "";
+        if (isProcessing) {
+            // Processing chips: ⟳ icon, muted dashed style — no --chip-color tinting
+            return `<span class="activity-chip activity-chip--processing" title="${escapeHtml(tooltip)}">
+                ⟳ ${label} <span class="activity-chip-meta">${displayTime} · ${a.percentage}%</span>
+            </span>`;
+        }
 
-        return `<span class="page-chip" style="--chip-color:${color}" title="${escapeHtml(tooltip)}">
-            <span class="page-chip-dot"></span>${label} <span class="page-chip-meta">${totalTime} · ${p.percentage}%</span>${renderAnnotation}
+        return `<span class="activity-chip" style="--chip-color:${color}" title="${escapeHtml(tooltip)}">
+            <span class="activity-chip-dot"></span>${label} <span class="activity-chip-meta">${displayTime} · ${a.percentage}%</span>
         </span>`;
     }).join("");
 
-    return `<div class="page-chips">${chips}</div>`;
+    return `<div class="activity-chips">${chips}</div>`;
 }
 
 function escapeHtml(text) {

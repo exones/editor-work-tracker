@@ -15,7 +15,7 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
     private readonly ILogger                _logger;
     private readonly Timer                  _pollTimer;
 
-    // Internal state for edge-event detection (page/timeline/render still use events for PageTracker)
+    // Internal state for edge-event detection (page/timeline/render still use events for ActivityTracker)
     private string? _currentProject;
     private string? _currentPage;
     private string? _currentTimeline;
@@ -24,12 +24,12 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
     private bool    _wasProcessRunning;
     private bool    _sanityCheckPassed;
 
-    // Properties still read by PageTracker directly
+    // Properties still read by ActivityTracker directly
     public string? CurrentPage     => _currentPage;
     public string? CurrentTimeline => _currentTimeline;
     public bool    IsRendering     => _isRendering;
 
-    // ── Edge events for PageTracker (segment boundaries) ─────────────────────
+    // ── Edge events for ActivityTracker (segment boundaries) ─────────────────
     public event EventHandler<string>? PageChanged;
     public event EventHandler<string>? TimelineChanged;
     public event EventHandler?         RenderingStarted;

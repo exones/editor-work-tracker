@@ -6,43 +6,45 @@ public class StatisticsService
 {
     public List<ProjectStatistics> CalculateStatistics(
         List<ProjectSession> sessions,
-        List<PageTimeEntry> pageEntries,
+        List<ActivityEntry> activityEntries,
         string? currentProjectName,
         string? currentUserName = null)
     {
-        // Pre-group page entries by (ProjectName, UserName) for O(n) lookup
-        var pagesByProjectUser = pageEntries
-            .GroupBy(p => new { p.ProjectName, p.UserName })
+        // Pre-group activity entries by (ProjectName, UserName) for O(n) lookup
+        var entriesByProjectUser = activityEntries
+            .GroupBy(a => new { a.ProjectName, a.UserName })
             .ToDictionary(g => g.Key, g => g.ToList());
 
         var stats = sessions
             .GroupBy(s => new { s.ProjectName, s.UserName })
             .Select(g =>
             {
+                // Session-based total is used as the denominator for percentages and
+                // for TotalElapsedTime; it reflects true elapsed time including any
+                // gaps where page/activity tracking was unavailable.
                 var totalSeconds = g.Sum(s => CalculateSeconds(s));
 
-                pagesByProjectUser.TryGetValue(g.Key, out var entries);
+                entriesByProjectUser.TryGetValue(g.Key, out var entries);
                 entries ??= [];
 
-                var renderSeconds = entries.Where(p => p.IsRendering).Sum(p => CalculatePageSeconds(p));
-                var workSeconds   = totalSeconds - renderSeconds;
-                if (workSeconds < 0) workSeconds = 0;
+                var workSeconds       = entries.Where(a => a.Kind == ActivityKind.User).Sum(a => CalculateActivitySeconds(a));
+                var processingSeconds = entries.Where(a => a.Kind == ActivityKind.Processing).Sum(a => CalculateActivitySeconds(a));
 
-                var breakdown = BuildPageBreakdown(entries, totalSeconds);
+                var breakdown = BuildActivityBreakdown(entries, totalSeconds);
 
                 return new ProjectStatistics
                 {
-                    ProjectName      = g.Key.ProjectName,
-                    UserName         = g.Key.UserName,
-                    TotalActiveTime  = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(totalSeconds)),
-                    TotalElapsedTime = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(totalSeconds)),
-                    TotalWorkTime    = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(workSeconds)),
-                    TotalRenderTime  = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(renderSeconds)),
-                    LastActivity     = g.Max(s => s.EndTime ?? s.StartTime),
-                    SessionCount     = g.Count(),
+                    ProjectName         = g.Key.ProjectName,
+                    UserName            = g.Key.UserName,
+                    TotalActiveTime     = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(totalSeconds)),
+                    TotalElapsedTime    = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(totalSeconds)),
+                    TotalWorkTime       = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(workSeconds)),
+                    TotalProcessingTime = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(processingSeconds)),
+                    LastActivity        = g.Max(s => s.EndTime ?? s.StartTime),
+                    SessionCount        = g.Count(),
                     IsCurrentlyTracking = g.Key.ProjectName == currentProjectName
                                        && g.Key.UserName    == currentUserName,
-                    PageBreakdown    = breakdown
+                    ActivityBreakdown   = breakdown
                 };
             })
             .OrderByDescending(s => s.LastActivity)
@@ -51,37 +53,38 @@ public class StatisticsService
         return stats;
     }
 
-    private static List<PageTimeStat> BuildPageBreakdown(
-        List<PageTimeEntry> entries, long totalProjectSeconds)
+    private static List<ActivityTimeStat> BuildActivityBreakdown(
+        List<ActivityEntry> entries, long totalProjectSeconds)
     {
         if (totalProjectSeconds <= 0) return [];
 
         return entries
-            .GroupBy(p => p.Page)
+            .GroupBy(a => a.ActivityType)
             .Select(g =>
             {
-                var totalSecs  = g.Sum(p => CalculatePageSeconds(p));
-                var activeSecs = g.Where(p => !p.IsRendering).Sum(p => CalculatePageSeconds(p));
-                var renderSecs = g.Where(p =>  p.IsRendering).Sum(p => CalculatePageSeconds(p));
-                var timelines  = g
-                    .Where(p => !string.IsNullOrWhiteSpace(p.TimelineName))
-                    .Select(p => p.TimelineName!)
+                var totalSecs = g.Sum(a => CalculateActivitySeconds(a));
+                var timelines = g
+                    .Where(a => !string.IsNullOrWhiteSpace(a.TimelineName))
+                    .Select(a => a.TimelineName!)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(t => t)
                     .ToList();
 
-                return new PageTimeStat
+                // All entries in a group share the same Kind (User or Processing),
+                // so take the kind from the first entry.
+                var kind = g.First().Kind;
+
+                return new ActivityTimeStat
                 {
-                    Page       = g.Key,
-                    TotalTime  = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(totalSecs)),
-                    ActiveTime = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(activeSecs)),
-                    RenderTime = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(renderSecs)),
-                    Percentage = Math.Round(totalSecs * 100.0 / totalProjectSeconds, 1),
-                    Timelines  = timelines
+                    ActivityType = g.Key,
+                    Kind         = kind,
+                    TotalTime    = TimeSpanDto.FromTimeSpan(TimeSpan.FromSeconds(totalSecs)),
+                    Percentage   = Math.Round(totalSecs * 100.0 / totalProjectSeconds, 1),
+                    Timelines    = timelines
                 };
             })
-            .Where(p => p.TotalTime.TotalSeconds > 0)
-            .OrderByDescending(p => p.TotalTime.TotalSeconds)
+            .Where(a => a.TotalTime.TotalSeconds > 0)
+            .OrderByDescending(a => a.TotalTime.TotalSeconds)
             .ToList();
     }
 
@@ -91,7 +94,7 @@ public class StatisticsService
         return (long)(end - session.StartTime).TotalSeconds;
     }
 
-    private static long CalculatePageSeconds(PageTimeEntry entry)
+    private static long CalculateActivitySeconds(ActivityEntry entry)
     {
         var end = entry.EndTime ?? entry.FlushedEnd ?? DateTime.UtcNow;
         return (long)(end - entry.StartTime).TotalSeconds;

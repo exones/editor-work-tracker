@@ -6,7 +6,7 @@ namespace DaVinciTimeTracker.Data;
 public class TimeTrackerDbContext : DbContext
 {
     public DbSet<ProjectSession> ProjectSessions { get; set; }
-    public DbSet<PageTimeEntry> PageTimeEntries { get; set; }
+    public DbSet<ActivityEntry> ActivityEntries { get; set; }
 
     public TimeTrackerDbContext(DbContextOptions<TimeTrackerDbContext> options)
         : base(options)
@@ -25,12 +25,14 @@ public class TimeTrackerDbContext : DbContext
             entity.HasIndex(e => e.UserName);
         });
 
-        modelBuilder.Entity<PageTimeEntry>(entity =>
+        modelBuilder.Entity<ActivityEntry>(entity =>
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.ProjectName).IsRequired();
             entity.Property(e => e.UserName).IsRequired();
-            entity.Property(e => e.Page).IsRequired();
+            entity.Property(e => e.ActivityType).IsRequired();
+            entity.Property(e => e.Kind).IsRequired()
+                  .HasConversion<string>();
             entity.Property(e => e.StartTime).IsRequired();
 
             entity.HasIndex(e => e.SessionId);

@@ -34,10 +34,10 @@ public class ApiController : ControllerBase
     public async Task<IActionResult> GetProjects()
     {
         Response.Headers.ContentType = "application/json; charset=utf-8";
-        var sessions    = await _repository.GetAllSessionsAsync();
-        var pageEntries = await _repository.GetAllPageEntriesAsync();
-        var currentUserName = _sessionManager.CurrentUserName;
-        var stats = _statisticsService.CalculateStatistics(sessions, pageEntries, _sessionManager.CurrentProjectName, currentUserName);
+        var sessions         = await _repository.GetAllSessionsAsync();
+        var activityEntries  = await _repository.GetAllActivitiesAsync();
+        var currentUserName  = _sessionManager.CurrentUserName;
+        var stats = _statisticsService.CalculateStatistics(sessions, activityEntries, _sessionManager.CurrentProjectName, currentUserName);
 
         // Add current state information to the currently tracking project for current user
         foreach (var stat in stats)
