@@ -1,6 +1,8 @@
+using DaVinciTimeTracker.Core.Diagnostics;
 using DaVinciTimeTracker.Core.Models;
 using DaVinciTimeTracker.Core.NodeToggle;
 using DaVinciTimeTracker.Core.Services;
+using DaVinciTimeTracker.Core.Utilities;
 using DaVinciTimeTracker.Data.Repositories;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,13 +12,14 @@ namespace DaVinciTimeTracker.Web.Controllers;
 [Route("api")]
 public class ApiController : ControllerBase
 {
-    private readonly SessionRepository   _repository;
-    private readonly ProjectRepository   _projectRepository;
-    private readonly StatisticsService   _statisticsService;
-    private readonly SessionManager      _sessionManager;
-    private readonly NodeToggleService   _nodeToggleService;
-    private readonly TrackingContext     _trackingContext;
-    private readonly UserSettingsService _userSettingsService;
+    private readonly SessionRepository        _repository;
+    private readonly ProjectRepository        _projectRepository;
+    private readonly StatisticsService        _statisticsService;
+    private readonly SessionManager           _sessionManager;
+    private readonly NodeToggleService        _nodeToggleService;
+    private readonly TrackingContext          _trackingContext;
+    private readonly UserSettingsService      _userSettingsService;
+    private readonly ResolveDiagnosticsService _diagnosticsService;
 
     public ApiController(
         SessionRepository repository,
@@ -25,7 +28,8 @@ public class ApiController : ControllerBase
         SessionManager sessionManager,
         NodeToggleService nodeToggleService,
         TrackingContext trackingContext,
-        UserSettingsService userSettingsService)
+        UserSettingsService userSettingsService,
+        ResolveDiagnosticsService diagnosticsService)
     {
         _repository          = repository;
         _projectRepository   = projectRepository;
@@ -34,6 +38,7 @@ public class ApiController : ControllerBase
         _nodeToggleService   = nodeToggleService;
         _trackingContext     = trackingContext;
         _userSettingsService = userSettingsService;
+        _diagnosticsService  = diagnosticsService;
     }
 
     [HttpGet("projects")]
@@ -280,6 +285,60 @@ public class ApiController : ControllerBase
                 return Ok(new { success = true, enabled });
 
             return Ok(new { success = false, message = "Toggle failed — check application logs for details." });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    // ── Diagnostics ───────────────────────────────────────────────────────────
+
+    /// <summary>Lightweight health pill for the dashboard header.</summary>
+    [HttpGet("health")]
+    public async Task<IActionResult> GetHealth()
+    {
+        var results = await _diagnosticsService.RunAllAsync();
+        var summary = _diagnosticsService.GetHealthSummary(results);
+        return Ok(summary);
+    }
+
+    /// <summary>Full structured diagnostic check results for the Troubleshooter tab.</summary>
+    [HttpGet("diagnostics")]
+    public async Task<IActionResult> GetDiagnostics()
+    {
+        var results = await _diagnosticsService.RunAllAsync();
+        return Ok(results);
+    }
+
+    /// <summary>Plain-text exportable report (copy to clipboard or save to file).</summary>
+    [HttpGet("diagnostics/report")]
+    [Produces("text/plain")]
+    public async Task<IActionResult> GetDiagnosticReport()
+    {
+        var results = await _diagnosticsService.RunAllAsync();
+        var report  = DiagnosticReportBuilder.Build(results);
+        return Content(report, "text/plain");
+    }
+
+    /// <summary>Apply a safe auto-fix by ID (e.g. pin DAVINCI_TRACKER_PYTHON).</summary>
+    [HttpPost("diagnostics/apply-fix/{autoFixId}")]
+    public IActionResult ApplyFix(string autoFixId)
+    {
+        try
+        {
+            if (autoFixId.StartsWith("pin-python:", StringComparison.OrdinalIgnoreCase))
+            {
+                var pythonPath = autoFixId["pin-python:".Length..];
+                if (!System.IO.File.Exists(pythonPath))
+                    return BadRequest(new { success = false, message = $"Python not found at: {pythonPath}" });
+
+                Environment.SetEnvironmentVariable("DAVINCI_TRACKER_PYTHON", pythonPath,
+                    EnvironmentVariableTarget.User);
+                return Ok(new { success = true, message = $"Pinned DAVINCI_TRACKER_PYTHON={pythonPath} (restart app to apply)" });
+            }
+
+            return BadRequest(new { success = false, message = $"Unknown fix id: {autoFixId}" });
         }
         catch (Exception ex)
         {

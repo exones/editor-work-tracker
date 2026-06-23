@@ -77,6 +77,17 @@ public sealed class NodeToggleApiClient : IDisposable
         return (false, null);
     }
 
+    /// <summary>
+    /// Runs the daemon's diagnose action and returns the raw JSON node,
+    /// or null if the daemon is not connected or returns an error.
+    /// Used by ResolveDiagnosticsService.
+    /// </summary>
+    public async Task<JsonNode?> SendDiagnoseAsync()
+    {
+        var cmd = JsonSerializer.Serialize(new { action = "diagnose" });
+        return await _daemon.SendAsync(cmd);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void LogActionableHint(string msg)

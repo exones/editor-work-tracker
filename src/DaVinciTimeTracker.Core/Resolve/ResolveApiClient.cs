@@ -10,15 +10,18 @@ public class ResolveApiClient
     private readonly string _pythonPath;
     private readonly string _scriptPath;
     private readonly ILogger _logger;
+    private readonly IResolvePlatform _platform;
     private string? _lastErrorMessage;
     private int _consecutiveErrors = 0;
     private DateTime _lastErrorLogTime = DateTime.MinValue;
 
-    public ResolveApiClient(string pythonPath, string scriptPath, ILogger logger)
+    public ResolveApiClient(string pythonPath, string scriptPath, ILogger logger,
+        IResolvePlatform? platform = null)
     {
         _pythonPath = pythonPath;
         _scriptPath = scriptPath;
         _logger = logger;
+        _platform = platform ?? ResolvePlatformFactory.Create();
 
         // Log configuration for troubleshooting
         _logger.Information("DaVinci API Client configured:");
@@ -121,20 +124,19 @@ public class ResolveApiClient
         _logger.Information("✓ Testing API connection to DaVinci Resolve...");
         try
         {
-            using var process = new Process
+            var psi = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = _pythonPath,
-                    Arguments = $"\"{_scriptPath}\"",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8
-                }
+                FileName = _pythonPath,
+                Arguments = $"\"{_scriptPath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
             };
+            ResolveEnvironment.ApplyTo(psi, _pythonPath, _platform);
+            using var process = new Process { StartInfo = psi };
 
             process.Start();
             var output = await process.StandardOutput.ReadToEndAsync();
@@ -223,20 +225,19 @@ public class ResolveApiClient
     {
         try
         {
-            using var process = new Process
+            var psi = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = _pythonPath,
-                    Arguments = $"\"{_scriptPath}\"",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8
-                }
+                FileName = _pythonPath,
+                Arguments = $"\"{_scriptPath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
             };
+            ResolveEnvironment.ApplyTo(psi, _pythonPath, _platform);
+            using var process = new Process { StartInfo = psi };
 
             process.Start();
             var output = await process.StandardOutput.ReadToEndAsync();

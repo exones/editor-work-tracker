@@ -27,8 +27,34 @@ header {
 }
 
 header h1 {
-  margin-bottom: 15px;
+  margin-bottom: 10px;
   font-size: 2rem;
+}
+
+.header-right {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Bridge health pill */
+.bridge-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255,255,255,0.15);
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  align-self: flex-start;
+}
+
+.bridge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex-shrink: 0;
 }
 
 .status-bar {
@@ -1094,3 +1120,78 @@ footer {
   padding-top: 20px;
   border-top: 1px solid #e2e8f0;
 }
+
+/* ── Troubleshooter ──────────────────────────────────────────────────── */
+
+.troubleshooter-section { padding: 0; }
+
+.troubleshooter-actions { display: flex; gap: 8px; }
+
+.diag-card {
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.diag-card.diag-pass   { border-left: 4px solid #4ade80; }
+.diag-card.diag-warn   { border-left: 4px solid #fbbf24; }
+.diag-card.diag-fail   { border-left: 4px solid #f87171; }
+.diag-card.diag-skip   { border-left: 4px solid #94a3b8; }
+
+.diag-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #f8fafc;
+  font-weight: 600;
+  color: #1e293b;
+  cursor: pointer;
+}
+
+.diag-icon { font-size: 1.1rem; }
+.diag-title { font-size: 0.95rem; }
+
+.diag-body {
+  padding: 10px 16px 14px;
+  background: white;
+}
+
+.diag-msg {
+  font-size: 0.83rem;
+  padding: 3px 0;
+  color: #334155;
+}
+
+.diag-msg.msg-fail { color: #dc2626; }
+.diag-msg.msg-warn { color: #b45309; }
+.diag-msg.msg-pass { color: #16a34a; }
+
+.diag-options {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diag-option {
+  background: #f1f5f9;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.diag-option strong { font-size: 0.85rem; color: #1e293b; }
+
+.diag-instructions {
+  margin: 6px 0 8px;
+  font-size: 0.78rem;
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 4px;
+  padding: 6px 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diag-option-btns { display: flex; gap: 6px; }

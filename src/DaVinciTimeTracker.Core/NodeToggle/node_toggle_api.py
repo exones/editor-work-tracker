@@ -248,6 +248,31 @@ for line in sys.stdin:
             # GetCurrentPage() only works reliably from a persistent connection (returns None in fresh processes)
             page = resolve.GetCurrentPage()
             _respond({"status": "ok", "page": page})
+        elif action == "diagnose":
+            # Full diagnostic snapshot — used by the in-app Troubleshooter (heavier than get_page)
+            import struct as _struct
+            try:
+                product_name = resolve.GetProductName()
+                version_string = resolve.GetVersionString()
+                is_studio = "Studio" in (product_name or "")
+                pm = resolve.GetProjectManager()
+                project = pm.GetCurrentProject() if pm else None
+                project_open = project is not None
+                current_page = resolve.GetCurrentPage()
+                _respond({
+                    "status": "ok",
+                    "product_name": product_name,
+                    "is_studio": is_studio,
+                    "version_string": version_string,
+                    "scriptapp_ok": True,
+                    "project_open": project_open,
+                    "current_page": current_page,
+                    "python_executable": sys.executable,
+                    "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                    "is_64bit": _struct.calcsize("P") == 8,
+                })
+            except Exception as e:
+                _respond({"status": "error", "message": str(e)})
         elif action == "ping":
             _respond({"status": "ok", "message": "pong"})
         else:

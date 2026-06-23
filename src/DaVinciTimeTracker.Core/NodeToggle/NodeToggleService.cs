@@ -31,6 +31,9 @@ public class NodeToggleService : IDisposable
     /// <summary>Fired when the config file changes (after debounce), with the new group list.</summary>
     public event Action<List<ToggleGroup>>? ConfigChanged;
 
+    /// <summary>Exposes the underlying API client so diagnostics can call SendDiagnoseAsync.</summary>
+    public NodeToggleApiClient GetApiClient() => _apiClient;
+
     public NodeToggleService(string pythonPath, string scriptPath, string configPath, ILogger logger)
     {
         _apiClient = new NodeToggleApiClient(logger);

@@ -356,17 +356,21 @@ function switchTab(name, btn) {
     document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
     document.getElementById(`tab-${name}`).style.display = "block";
     btn.classList.add("active");
-    if (name === "toggles")  fetchNodeToggles();
-    if (name === "settings") fetchSettings();
+    if (name === "toggles")       fetchNodeToggles();
+    if (name === "settings")      fetchSettings();
+    if (name === "troubleshooter") runDiagnostics();
 }
 
 // ── Initial load ──────────────────────────────────────────────────────────────
 
 // Initial load
 refresh();
+fetchBridgeHealth();
 
 // Auto-refresh every 5 seconds
 refreshInterval = setInterval(refresh, 5000);
+// Health pill refreshes every 15 seconds
+setInterval(fetchBridgeHealth, 15000);
 
 // ── Node Toggle Panel ─────────────────────────────────────────────────────────
 
@@ -909,4 +913,111 @@ async function saveSettings() {
     } catch (e) {
         showNotification('Failed to save settings', 'error');
     }
+}
+
+// ── Bridge Health Pill ────────────────────────────────────────────────────────
+
+async function fetchBridgeHealth() {
+    try {
+        const res = await fetch(`${API_BASE}/api/health`);
+        if (!res.ok) { setBridgeHealth('red', 'Cannot reach app'); return; }
+        const h = await res.json();
+        const color = h.level === 0 ? 'green' : h.level === 1 ? 'amber' : 'red';
+        setBridgeHealth(color, h.summary);
+    } catch {
+        setBridgeHealth('red', 'App not reachable');
+    }
+}
+
+function setBridgeHealth(color, text) {
+    const pill = document.getElementById('bridge-health');
+    const dot  = pill?.querySelector('.bridge-dot');
+    const txt  = document.getElementById('bridge-health-text');
+    if (!pill) return;
+    pill.dataset.level = color;
+    if (dot)  dot.style.background = color === 'green' ? '#4ade80' : color === 'amber' ? '#fbbf24' : '#f87171';
+    if (txt)  txt.textContent = text;
+}
+
+// ── Troubleshooter Tab ────────────────────────────────────────────────────────
+
+let _diagnosticsResults = [];
+
+async function runDiagnostics() {
+    const container = document.getElementById('diagnostics-container');
+    container.innerHTML = '<p class="loading">Running diagnostics (this may take a few seconds)…</p>';
+    try {
+        const res = await fetch(`${API_BASE}/api/diagnostics`);
+        _diagnosticsResults = await res.json();
+        renderDiagnostics(_diagnosticsResults);
+    } catch (e) {
+        container.innerHTML = '<p class="loading">Failed to run diagnostics — is the app running?</p>';
+    }
+}
+
+function renderDiagnostics(results) {
+    const container = document.getElementById('diagnostics-container');
+    if (!results || results.length === 0) {
+        container.innerHTML = '<p class="loading">No results.</p>';
+        return;
+    }
+    container.innerHTML = results.map(r => {
+        const icon = r.status === 'Pass' ? '✅' : r.status === 'Warn' ? '⚠️' : r.status === 'Fail' ? '❌' : '⏭';
+        const cardClass = r.status === 'Fail' ? 'diag-fail' : r.status === 'Warn' ? 'diag-warn' : r.status === 'Pass' ? 'diag-pass' : 'diag-skip';
+        const messagesHtml = (r.messages || []).map(m => {
+            const cls = m.severity === 'Fail' ? 'msg-fail' : m.severity === 'Warn' ? 'msg-warn' : 'msg-pass';
+            return `<div class="diag-msg ${cls}">${escapeHtml(m.text)}</div>`;
+        }).join('');
+        const optionsHtml = (r.options || []).length > 0
+            ? `<div class="diag-options">${(r.options || []).map((o, i) => `
+                <div class="diag-option">
+                    <strong>${i + 1}. ${escapeHtml(o.label)}</strong>
+                    <pre class="diag-instructions">${escapeHtml(o.instructions)}</pre>
+                    <div class="diag-option-btns">
+                        <button class="btn btn-sm btn-secondary" onclick="navigator.clipboard.writeText(${JSON.stringify(o.instructions)})">📋 Copy</button>
+                        ${o.autoFixId ? `<button class="btn btn-sm btn-primary" onclick="applyFix(${JSON.stringify(o.autoFixId)})">⚡ Apply</button>` : ''}
+                    </div>
+                </div>`).join('')}</div>`
+            : '';
+        return `
+            <div class="diag-card ${cardClass}">
+                <div class="diag-header">
+                    <span class="diag-icon">${icon}</span>
+                    <span class="diag-title">${escapeHtml(r.title)}</span>
+                </div>
+                <div class="diag-body">${messagesHtml}${optionsHtml}</div>
+            </div>`;
+    }).join('');
+}
+
+async function applyFix(autoFixId) {
+    try {
+        const res = await fetch(`${API_BASE}/api/diagnostics/apply-fix/${encodeURIComponent(autoFixId)}`, { method: 'POST' });
+        const data = await res.json();
+        showNotification(data.message || (data.success ? 'Fix applied' : 'Fix failed'), data.success ? 'success' : 'error');
+        if (data.success) await runDiagnostics();
+    } catch { showNotification('Failed to apply fix', 'error'); }
+}
+
+async function copyReport() {
+    try {
+        const res = await fetch(`${API_BASE}/api/diagnostics/report`);
+        const text = await res.text();
+        await navigator.clipboard.writeText(text);
+        showNotification('Report copied to clipboard', 'success');
+    } catch { showNotification('Failed to copy report', 'error'); }
+}
+
+async function saveReport() {
+    try {
+        const res = await fetch(`${API_BASE}/api/diagnostics/report`);
+        const text = await res.text();
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = `davinci-tracker-diag-${new Date().toISOString().slice(0,10)}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch { showNotification('Failed to save report', 'error'); }
 }

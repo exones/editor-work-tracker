@@ -1,3 +1,4 @@
+using DaVinciTimeTracker.Core.Resolve;
 using Serilog;
 using System.Diagnostics;
 using System.Text;
@@ -38,6 +39,7 @@ public sealed class PythonDaemon : IDisposable
     private readonly SemaphoreSlim _ioLock   = new(1, 1);
     private bool           _disposed;
     private readonly ILogger _logger;
+    private readonly IResolvePlatform _platform;
 
     /// <summary>Fires when the process becomes ready (connected to DaVinci).</summary>
     public event Action?  BecameReady;
@@ -49,7 +51,11 @@ public sealed class PythonDaemon : IDisposable
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
-    public PythonDaemon(ILogger logger) => _logger = logger;
+    public PythonDaemon(ILogger logger, IResolvePlatform? platform = null)
+    {
+        _logger = logger;
+        _platform = platform ?? ResolvePlatformFactory.Create();
+    }
 
     public void Configure(string pythonPath, string scriptPath)
     {
@@ -143,23 +149,21 @@ public sealed class PythonDaemon : IDisposable
 
         _logger.Information("PythonDaemon: starting — {Python} \"{Script}\"", PythonPath, ScriptPath);
 
-        _proc = new Process
+        var psi = new ProcessStartInfo
         {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName  = PythonPath,
-                Arguments = $"\"{ScriptPath}\"",
-                RedirectStandardInput  = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError  = true,
-                UseShellExecute  = false,
-                CreateNoWindow   = true,
-                StandardInputEncoding  = Encoding.UTF8,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding  = Encoding.UTF8,
-            },
-            EnableRaisingEvents = true
+            FileName  = PythonPath,
+            Arguments = $"\"{ScriptPath}\"",
+            RedirectStandardInput  = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError  = true,
+            UseShellExecute  = false,
+            CreateNoWindow   = true,
+            StandardInputEncoding  = Encoding.UTF8,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding  = Encoding.UTF8,
         };
+        ResolveEnvironment.ApplyTo(psi, PythonPath, _platform);
+        _proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
         _proc.ErrorDataReceived += OnStderr;
         _proc.Exited += OnProcessExited;

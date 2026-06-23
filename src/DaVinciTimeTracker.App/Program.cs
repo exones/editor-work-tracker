@@ -1,6 +1,7 @@
 using DaVinciTimeTracker.App;
 using DaVinciTimeTracker.App.Hotkeys;
 using DaVinciTimeTracker.Core.Configuration;
+using DaVinciTimeTracker.Core.Diagnostics;
 using DaVinciTimeTracker.Core.Monitors;
 using DaVinciTimeTracker.Core.Models;
 using DaVinciTimeTracker.Core.Native;
@@ -63,6 +64,12 @@ try
         "", "", AppPaths.NodeToggleConfigPath, Log.Logger);
     AppState.NodeToggleService = nodeToggleService;
 
+    // DiagnosticsService placeholder — real instance (with resolved Python) created after Python detection
+    var platform = ResolvePlatformFactory.Create();
+    AppState.DiagnosticsService = new ResolveDiagnosticsService(
+        platform, SystemActivityProviderFactory.Create(Log.Logger),
+        nodeToggleService.GetApiClient(), "", Log.Logger);
+
     // Load user settings before the web server and tracking components start
     var userSettingsService = new UserSettingsService(AppPaths.UserSettingsPath, Log.Logger);
     AppState.UserSettingsService = userSettingsService;
@@ -115,6 +122,7 @@ try
         builder.Services.AddSingleton<NodeToggleService>(sp => AppState.NodeToggleService);
         builder.Services.AddSingleton<TrackingContext>(sp => AppState.TrackingContext);
         builder.Services.AddSingleton<UserSettingsService>(sp => AppState.UserSettingsService);
+        builder.Services.AddSingleton<ResolveDiagnosticsService>(sp => AppState.DiagnosticsService);
 
         builder.WebHost.UseUrls("http://localhost:5555");
 
@@ -201,16 +209,17 @@ try
     var pythonPath = PythonPathResolver.FindPythonExecutable(Log.Logger, scriptPath);
     if (pythonPath == null)
     {
-        var errorMsg = "Python not found. Please install Python 3.8+ or set DAVINCI_TRACKER_PYTHON environment variable to python.exe path.";
-        Log.Fatal(errorMsg);
+        const string troubleshooterHint = "\n\nOpen the Troubleshooter in the dashboard (http://localhost:5555 → 🔧 Troubleshooter tab) for guided diagnosis and fix options.";
+        var errorMsg = "Python not found. Need Python 3.10–3.12, 64-bit.\n\nOptions:\n• Install Python 3.12: winget install Python.Python.3.12\n• Set DAVINCI_TRACKER_PYTHON env var to an existing python.exe" + troubleshooterHint;
+        Log.Fatal("Python not found — tracking cannot start");
         MessageBox.Show(errorMsg, "Python Not Found", MessageBoxButtons.OK, MessageBoxIcon.Error);
         return;
     }
 
     if (!PythonPathResolver.ValidatePythonInstallation(pythonPath, Log.Logger))
     {
-        var errorMsg = $"Python installation at '{pythonPath}' is not valid.";
-        Log.Fatal(errorMsg);
+        var errorMsg = $"Python at '{pythonPath}' failed basic validation (python --version failed).\n\nTry setting DAVINCI_TRACKER_PYTHON to a different interpreter.\n\nOpen http://localhost:5555 → 🔧 Troubleshooter for details.";
+        Log.Fatal("Python installation invalid: {Path}", pythonPath);
         MessageBox.Show(errorMsg, "Invalid Python Installation", MessageBoxButtons.OK, MessageBoxIcon.Error);
         return;
     }
@@ -248,6 +257,15 @@ try
 
     // Now that Python is resolved, wire the correct executable into NodeToggleService
     nodeToggleService.SetPythonExecutable(pythonPath, AppPaths.NodeToggleScriptPath);
+
+    // Diagnostics service — needs the resolved Python and the live NodeToggleApiClient
+    var diagnosticsService = new ResolveDiagnosticsService(
+        ResolvePlatformFactory.Create(),
+        systemActivity,
+        nodeToggleService.GetApiClient(),
+        pythonPath,
+        Log.Logger);
+    AppState.DiagnosticsService = diagnosticsService;
     var hotkeyManager = HotkeyManagerFactory.Create(Log.Logger);
     hotkeyManager.Reload(nodeToggleService.GetAll());
     nodeToggleService.ConfigChanged += groups => hotkeyManager.Reload(groups);
@@ -370,10 +388,11 @@ finally
 
 public static class AppState
 {
-    public static TimeTrackingService TimeTrackingService  { get; set; } = null!;
-    public static SessionManager      SessionManager       { get; set; } = null!;
-    public static SessionRepository   SessionRepository    { get; set; } = null!;
-    public static NodeToggleService   NodeToggleService    { get; set; } = null!;
-    public static TrackingContext     TrackingContext       { get; set; } = null!;
-    public static UserSettingsService UserSettingsService  { get; set; } = null!;
+    public static TimeTrackingService      TimeTrackingService  { get; set; } = null!;
+    public static SessionManager           SessionManager       { get; set; } = null!;
+    public static SessionRepository        SessionRepository    { get; set; } = null!;
+    public static NodeToggleService        NodeToggleService    { get; set; } = null!;
+    public static TrackingContext          TrackingContext       { get; set; } = null!;
+    public static UserSettingsService      UserSettingsService  { get; set; } = null!;
+    public static ResolveDiagnosticsService DiagnosticsService  { get; set; } = null!;
 }

@@ -1,28 +1,40 @@
+using DaVinciTimeTracker.Core.Resolve;
 using Serilog;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using System.Text;
 
 namespace DaVinciTimeTracker.Core.Utilities;
 
+/// <summary>
+/// Metadata about a discovered Python interpreter.
+/// </summary>
+public record PythonCandidate(
+    string Path,
+    Version? Version,         // null if probe failed
+    bool Is64Bit,             // false if 32-bit or probe failed
+    string Source,            // e.g. "PATH", "PyManager", "WindowsApps", "ProgramFiles"
+    string? CompatibilityNote // null = OK; non-null = warning text shown in Troubleshooter
+)
+{
+    /// <summary>True when this interpreter meets the minimum requirements (64-bit, ≥ 3.6).</summary>
+    public bool MeetsMinimumRequirements =>
+        Is64Bit && Version is not null && Version >= new Version(3, 6);
+
+    /// <summary>Human-readable summary for display.</summary>
+    public string DisplayLabel =>
+        Version is null
+            ? $"{Path} (probe failed)"
+            : $"{Path} — Python {Version.Major}.{Version.Minor}.{Version.Build} {(Is64Bit ? "64-bit" : "32-bit")}";
+}
+
 public static class PythonPathResolver
 {
+    private static readonly IResolvePlatform _platform = ResolvePlatformFactory.Create();
+
     /// <summary>
     /// Finds the best Python executable for DaVinci Resolve scripting.
-    ///
-    /// The tricky part: fusionscript.dll (DaVinci's C extension) requires a specific
-    /// Python process environment to initialize. Python.org builds can fail with
-    /// "initialization of fusionscript failed without raising an exception" even though
-    /// the Python version itself is compatible (stable ABI). Windows Store Python
-    /// (and launchers like PyManager) tend to work because they set up the process
-    /// environment differently.
-    ///
-    /// Strategy: collect all candidates, test each against fusionscript when DaVinci
-    /// is running, return the first that works. Falls back to first-found if no test
-    /// is possible (DaVinci not yet running at startup).
+    /// Probes each candidate for version and bitness; ranks 64-bit 3.10–3.12 highest.
+    /// Falls back to first-found if no compatibility test is possible.
     /// </summary>
     public static string? FindPythonExecutable(ILogger logger, string? scriptPath = null)
     {
@@ -36,62 +48,46 @@ public static class PythonPathResolver
             return envPython;
         }
 
-        var candidates = CollectCandidates(logger);
+        var candidates = CollectAndProbe(logger);
 
         if (candidates.Count == 0)
         {
-            logger.Warning("No Python executable found. Install Python or set DAVINCI_TRACKER_PYTHON.");
+            logger.Warning("No Python executable found. Install Python 3.10–3.12 (64-bit) or set DAVINCI_TRACKER_PYTHON.");
             return null;
         }
 
-        // If we have a script and RESOLVE_SCRIPT_LIB is set (DaVinci installed),
-        // test each candidate for actual fusionscript compatibility.
-        var resolveLib = Environment.GetEnvironmentVariable("RESOLVE_SCRIPT_LIB");
-        if (!string.IsNullOrEmpty(resolveLib) && File.Exists(resolveLib) && scriptPath != null && File.Exists(scriptPath))
+        // If RESOLVE_SCRIPT_LIB is resolvable, run fusionscript compatibility probe
+        var resolveLib = _platform.GetFusionScriptLibPath();
+        if (!string.IsNullOrEmpty(resolveLib) && File.Exists(resolveLib) &&
+            scriptPath != null && File.Exists(scriptPath))
         {
-            logger.Information("Testing {Count} Python candidates for DaVinci (fusionscript) compatibility...", candidates.Count);
+            logger.Information("Testing {Count} Python candidate(s) for DaVinci (fusionscript) compatibility...", candidates.Count);
             foreach (var candidate in candidates)
             {
-                var result = TestFusionScriptCompatibility(candidate, resolveLib, logger);
+                var result = TestFusionScriptCompatibility(candidate.Path, resolveLib, logger);
                 if (result == FusionScriptTestResult.Compatible)
                 {
-                    logger.Information("Selected DaVinci-compatible Python: {Path}", candidate);
-                    return candidate;
+                    logger.Information("Selected DaVinci-compatible Python: {Path}", candidate.Path);
+                    return candidate.Path;
                 }
                 if (result == FusionScriptTestResult.DaVinciNotRunning)
                 {
-                    // DaVinci not running — we can't tell which Python works.
-                    // Fall through to first-found selection below.
-                    logger.Debug("DaVinci not running yet, cannot test fusionscript compatibility. Using first Python found.");
+                    logger.Debug("DaVinci not running yet, cannot test fusionscript compatibility. Using first ranked Python.");
                     break;
                 }
-                // FusionScriptTestResult.Incompatible → try next candidate
             }
         }
 
-        // Fallback: return first candidate (DaVinci not running or no script path)
         var first = candidates[0];
-        logger.Information("Using first available Python (set DAVINCI_TRACKER_PYTHON to override): {Path}", first);
-        return first;
+        logger.Information("Using Python (set DAVINCI_TRACKER_PYTHON to override): {Path}", first.Path);
+        return first.Path;
     }
 
-    public enum FusionScriptTestResult
-    {
-        Compatible,
-        Incompatible,
-        DaVinciNotRunning,
-    }
+    public enum FusionScriptTestResult { Compatible, Incompatible, DaVinciNotRunning }
 
-    /// <summary>
-    /// Runs the resolve_api script with the given Python and categorizes the result:
-    /// - Compatible: fusionscript loaded and returned a project name or NO_PROJECT
-    /// - Incompatible: fusionscript failed to initialize (ABI or process environment mismatch)
-    /// - DaVinciNotRunning: couldn't determine (Resolve process not up yet)
-    /// </summary>
-    public static FusionScriptTestResult TestFusionScriptCompatibility(string pythonPath, string resolveLib, ILogger logger)
+    public static FusionScriptTestResult TestFusionScriptCompatibility(
+        string pythonPath, string resolveLib, ILogger logger)
     {
-        // Inline script: just load fusionscript — does not need DaVinci running to detect ABI issues,
-        // but PyInit itself requires Resolve's IPC. We distinguish the two error types by message.
         const string testScript = """
 import sys, os
 dv_dir = os.path.dirname(os.environ.get('RESOLVE_SCRIPT_LIB', ''))
@@ -112,145 +108,150 @@ except Exception as e:
     print(f'ERR:{e}')
     sys.exit(2)
 """;
-
-        // Write to a temp file — passing multiline scripts via -c on Windows is unreliable
-        // because the Arguments string escaping doesn't preserve newlines correctly.
         var tempScript = Path.Combine(Path.GetTempPath(), $"dtt_probe_{Guid.NewGuid():N}.py");
         try
         {
             File.WriteAllText(tempScript, testScript, Encoding.UTF8);
-
-            using var process = new Process
+            var psi = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = pythonPath,
-                    Arguments = $"\"{tempScript}\"",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8,
-                }
+                FileName = pythonPath,
+                Arguments = $"\"{tempScript}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
             };
+            // Inject the full deterministic env (PYTHONHOME, RESOLVE_SCRIPT_LIB/API, PYTHONPATH)
+            ResolveEnvironment.ApplyTo(psi, pythonPath, _platform);
 
-            // Pass RESOLVE_SCRIPT_LIB so the probe script can find the DLL
-            process.StartInfo.Environment["RESOLVE_SCRIPT_LIB"] = resolveLib;
-
+            using var process = new Process { StartInfo = psi };
             process.Start();
             var stdout = process.StandardOutput.ReadToEnd().Trim();
             var stderr = process.StandardError.ReadToEnd().Trim();
             var exited = process.WaitForExit(8000);
 
-            if (!exited)
-            {
-                process.Kill();
-                logger.Debug("  {Python}: fusionscript test timed out", pythonPath);
-                return FusionScriptTestResult.DaVinciNotRunning;
-            }
-
-            if (stdout.StartsWith("LOADED"))
-            {
-                logger.Debug("  {Python}: fusionscript loaded OK", pythonPath);
-                return FusionScriptTestResult.Compatible;
-            }
-
-            if (stdout.StartsWith("SYSERR") || stderr.Contains("initialization of fusionscript failed"))
-            {
-                logger.Debug("  {Python}: fusionscript ABI/IPC incompatible — {Detail}", pythonPath, stdout);
-                return FusionScriptTestResult.Incompatible;
-            }
-
-            // Any other error (DLL not found, module not found) suggests DaVinci not running
-            // or not installed — not a Python ABI problem
-            logger.Debug("  {Python}: fusionscript test inconclusive ({Stdout})", pythonPath, stdout);
+            if (!exited) { process.Kill(); logger.Debug("  {Python}: fusionscript test timed out", pythonPath); return FusionScriptTestResult.DaVinciNotRunning; }
+            if (stdout.StartsWith("LOADED")) { logger.Debug("  {Python}: fusionscript loaded OK", pythonPath); return FusionScriptTestResult.Compatible; }
+            if (stdout.StartsWith("SYSERR") || stderr.Contains("initialization of fusionscript failed")) { logger.Debug("  {Python}: incompatible — {Detail}", pythonPath, stdout); return FusionScriptTestResult.Incompatible; }
+            logger.Debug("  {Python}: inconclusive ({Stdout})", pythonPath, stdout);
             return FusionScriptTestResult.DaVinciNotRunning;
         }
-        catch (Exception ex)
-        {
-            logger.Debug("  {Python}: fusionscript test exception: {Error}", pythonPath, ex.Message);
-            return FusionScriptTestResult.DaVinciNotRunning;
-        }
-        finally
-        {
-            try { File.Delete(tempScript); } catch { }
-        }
+        catch (Exception ex) { logger.Debug("  {Python}: probe exception: {Error}", pythonPath, ex.Message); return FusionScriptTestResult.DaVinciNotRunning; }
+        finally { try { File.Delete(tempScript); } catch { } }
     }
 
+    // ── Candidate discovery + probing ─────────────────────────────────────────
+
     /// <summary>
-    /// Builds a deduplicated, ordered list of all Python candidate paths to evaluate.
+    /// Collects all Python candidates from the platform provider, probes each for
+    /// version and bitness, then ranks them: 64-bit 3.10–3.12 first, then 3.6–3.9,
+    /// then 3.13+. 32-bit and <3.6 interpreters are excluded.
     /// </summary>
-    private static List<string> CollectCandidates(ILogger logger)
+    internal static List<PythonCandidate> CollectAndProbe(ILogger logger)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var result = new List<string>();
+        var raw = new List<(string path, string source)>();
 
-        void Add(string path)
+        void Add(string path, string source)
         {
             if (string.IsNullOrWhiteSpace(path)) return;
             try { path = Path.GetFullPath(path); } catch { return; }
             if (File.Exists(path) && seen.Add(path))
-                result.Add(path);
+                raw.Add((path, source));
         }
 
-        // DaVinci-bundled Python (some older Resolve versions)
-        var resolveInstallDir = @"C:\Program Files\Blackmagic Design\DaVinci Resolve";
-        Add(Path.Combine(resolveInstallDir, "Python310", "python.exe"));
-        Add(Path.Combine(resolveInstallDir, "Python", "Python310", "python.exe"));
-        Add(Path.Combine(resolveInstallDir, "Python", "Python36", "python.exe"));
-
-        // PyManager (known to work with fusionscript on some systems where Python.org doesn't)
-        Add(@"C:\Program Files\PyManager\python.exe");
-
-        // Windows Store Python — tends to load fusionscript correctly due to process setup
-        var localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        Add(Path.Combine(localApp, "Microsoft", "WindowsApps", "python.exe"));
-        Add(Path.Combine(localApp, "Microsoft", "WindowsApps", "python3.exe"));
-
-        // All python.exe entries found in PATH (preserves PATH order)
-        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
-        foreach (var dir in pathEnv.Split(Path.PathSeparator))
+        // Ordered by preference source
+        foreach (var p in _platform.GetPythonCandidatePaths())
         {
-            try { Add(Path.Combine(dir.Trim(), "python.exe")); } catch { }
+            var source = ClassifySource(p);
+            Add(p, source);
         }
 
-        // Common Python.org installation locations
-        string[] commonPaths =
-        [
-            @"C:\Program Files\Python312\python.exe",
-            @"C:\Program Files\Python311\python.exe",
-            @"C:\Program Files\Python310\python.exe",
-            @"C:\Program Files\Python39\python.exe",
-            @"C:\Program Files\Python38\python.exe",
-            @"C:\Program Files (x86)\Python312\python.exe",
-            @"C:\Program Files (x86)\Python311\python.exe",
-            @"C:\Program Files (x86)\Python310\python.exe",
-            Path.Combine(localApp, "Programs", "Python", "Python312", "python.exe"),
-            Path.Combine(localApp, "Programs", "Python", "Python311", "python.exe"),
-            Path.Combine(localApp, "Programs", "Python", "Python310", "python.exe"),
-        ];
-        foreach (var p in commonPaths) Add(p);
+        // Probe each for version + bitness
+        var probed = new List<PythonCandidate>();
+        foreach (var (path, source) in raw)
+        {
+            var (version, is64Bit) = ProbeVersionAndBitness(path);
 
-        // Scan Program Files for any Python* directory
-        foreach (var programFilesDir in new[]
-        {
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
-        }.Where(Directory.Exists))
-        {
-            foreach (var dir in Directory.GetDirectories(programFilesDir, "Python*", SearchOption.TopDirectoryOnly)
-                                         .OrderByDescending(d => d))
+            // Exclude 32-bit or <3.6 — cannot load fusionscript
+            if (!is64Bit) { logger.Debug("Excluding 32-bit Python: {Path}", path); continue; }
+            if (version is not null && version < new Version(3, 6)) { logger.Debug("Excluding Python <3.6: {Path}", path); continue; }
+
+            string? note = null;
+            if (version is not null)
             {
-                Add(Path.Combine(dir, "python.exe"));
+                if (version.Major == 3 && version.Minor >= 13)
+                    note = $"Python {version.Major}.{version.Minor} may be incompatible with older Resolve versions (3.10–3.12 recommended)";
+                else if (version.Major == 3 && version.Minor < 10)
+                    note = $"Python {version.Major}.{version.Minor} works but 3.10–3.12 is preferred";
             }
+
+            probed.Add(new PythonCandidate(path, version, is64Bit, source, note));
         }
 
-        if (result.Count > 0)
-            logger.Information("Found {Count} Python candidate(s): {Paths}", result.Count, string.Join(", ", result));
+        if (probed.Count > 0)
+            logger.Information("Found {Count} Python candidate(s): {Paths}", probed.Count,
+                string.Join(", ", probed.Select(c => c.DisplayLabel)));
 
-        return result;
+        // Rank: 3.10–3.12 first, then 3.6–3.9, then 3.13+, then unknown version
+        return [.. probed.OrderBy(RankCandidate)];
     }
+
+    private static int RankCandidate(PythonCandidate c)
+    {
+        if (c.Version is null) return 99;
+        var minor = c.Version.Minor;
+        return c.Version.Major switch
+        {
+            3 when minor >= 10 && minor <= 12 => 0,  // ideal
+            3 when minor >= 6  && minor <= 9  => 1,  // acceptable
+            3 when minor >= 13               => 2,  // may have issues
+            _ => 99
+        };
+    }
+
+    private static string ClassifySource(string path)
+    {
+        if (path.Contains("PyManager", StringComparison.OrdinalIgnoreCase)) return "PyManager";
+        if (path.Contains("WindowsApps", StringComparison.OrdinalIgnoreCase)) return "WindowsApps";
+        if (path.Contains("DaVinci Resolve", StringComparison.OrdinalIgnoreCase)) return "DaVinci-bundled";
+        if (path.Contains("Program Files", StringComparison.OrdinalIgnoreCase)) return "ProgramFiles";
+        if (path.Contains("Programs\\Python", StringComparison.OrdinalIgnoreCase)) return "UserInstall";
+        return "PATH";
+    }
+
+    private static (Version? version, bool is64Bit) ProbeVersionAndBitness(string pythonPath)
+    {
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = pythonPath,
+                    Arguments = "-c \"import sys,struct; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}|{struct.calcsize(\\\"P\\\")==8}')\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = Encoding.UTF8,
+                }
+            };
+            process.Start();
+            var stdout = process.StandardOutput.ReadToEnd().Trim();
+            process.WaitForExit(5000);
+
+            var parts = stdout.Split('|');
+            if (parts.Length == 2 && Version.TryParse(parts[0], out var ver))
+                return (ver, parts[1].Equals("True", StringComparison.OrdinalIgnoreCase));
+        }
+        catch { }
+        return (null, false);
+    }
+
+    // ── Legacy helpers ────────────────────────────────────────────────────────
 
     public static bool ValidatePythonInstallation(string pythonPath, ILogger logger)
     {
@@ -259,7 +260,6 @@ except Exception as e:
             logger.Error("Python executable not found at: {Path}", pythonPath);
             return false;
         }
-
         try
         {
             using var process = new Process
@@ -274,33 +274,17 @@ except Exception as e:
                     CreateNoWindow = true
                 }
             };
-
             process.Start();
             var version = process.StandardOutput.ReadToEnd();
             var stderr = process.StandardError.ReadToEnd();
             var exited = process.WaitForExit(5000);
 
-            if (!exited)
-            {
-                process.Kill();
-                logger.Error("Python validation timed out");
-                return false;
-            }
-
-            if (process.ExitCode == 0)
-            {
-                logger.Information("Python validation successful: {Version}", version.Trim());
-                return true;
-            }
-
+            if (!exited) { process.Kill(); logger.Error("Python validation timed out"); return false; }
+            if (process.ExitCode == 0) { logger.Information("Python validation successful: {Version}", version.Trim()); return true; }
             var errorMessage = !string.IsNullOrWhiteSpace(stderr) ? stderr.Trim() : "No error details available";
             logger.Error("Python validation failed with exit code: {ExitCode}. Error: {Error}", process.ExitCode, errorMessage);
             return false;
         }
-        catch (Exception ex)
-        {
-            logger.Error(ex, "Failed to validate Python installation");
-            return false;
-        }
+        catch (Exception ex) { logger.Error(ex, "Failed to validate Python installation"); return false; }
     }
 }
