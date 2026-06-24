@@ -348,40 +348,23 @@ def handle_select(resolve, node_defs: list, append_key: dict, next_key: dict):
         VK_LWIN    = 0x5B
         KEYEVENTF_KEYUP = 0x0002
 
-        # ── Find DaVinci window by partial title (handles "DaVinci Resolve - Project") ──
-        def _find_davinci_hwnd():
-            result = ctypes.c_int(0)
-            EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
-            def _enum(hwnd, _lp):
-                length = user32.GetWindowTextLengthW(hwnd)
-                if length > 0:
-                    buf = ctypes.create_unicode_buffer(length + 1)
-                    user32.GetWindowTextW(hwnd, buf, length + 1)
-                    if buf.value.startswith("DaVinci Resolve"):
-                        result.value = hwnd
-                        return False  # stop enumeration
-                return True
-            user32.EnumWindows(EnumWindowsProc(_enum), 0)
-            return result.value
+        # Keystrokes go to whatever window currently has focus.
+        # If DaVinci is not in focus when the hotkey fires, the injected keys
+        # will go to the wrong window — but that's the caller's concern.
+        # The C# side can guard with IsDaVinciResolveInFocus() before sending.
 
-        hwnd = _find_davinci_hwnd()
-        if hwnd:
-            _dbg(f"[node_toggle_api] select: found DaVinci window hwnd={hwnd}, calling SetForegroundWindow")
-            user32.SetForegroundWindow(hwnd)
-            time.sleep(0.1)  # let the OS complete the focus switch
-            _dbg("[node_toggle_api] select: focus switched to DaVinci")
-        else:
-            _dbg("[node_toggle_api] select: WARNING — DaVinci window not found, injecting to current foreground")
-
-        # ── Release any currently held modifier keys ──────────────────────────────────
-        # When triggered via a hotkey (e.g. Ctrl+Alt+D), those keys may still be
-        # physically held when we start injecting. Releasing them prevents our
-        # injected keystrokes (e.g. Alt+S) from combining with the held modifiers
-        # and accidentally firing other registered hotkeys (e.g. Ctrl+Alt+S = SKIN).
-        for mod_vk in (VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN):
-            if user32.GetAsyncKeyState(mod_vk) & 0x8000:
-                _dbg(f"[node_toggle_api] select: releasing held modifier vk=0x{mod_vk:02X}")
-                user32.keybd_event(mod_vk, 0, KEYEVENTF_KEYUP, 0)
+        # ── Release held modifiers, inject, then restore ─────────────────────────────
+        # When triggered via a hotkey (e.g. Ctrl+Alt+D), those keys are physically
+        # held. We release them so injected keys (e.g. Alt+S) don't combine with
+        # them and fire other hotkeys. After injection we restore them so the user
+        # can press the next hotkey (e.g. Ctrl+Alt+H) without having to physically
+        # release and re-press the modifier keys.
+        held_mods = [vk for vk in (VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN)
+                     if user32.GetAsyncKeyState(vk) & 0x8000]
+        if held_mods:
+            _dbg(f"[node_toggle_api] select: releasing held modifiers {[f'0x{v:02X}' for v in held_mods]}")
+            for vk in held_mods:
+                user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
         time.sleep(0.03)  # let modifier releases settle
 
         BACKSPACE_DELAY = 0.05  # 50ms after backspace — node tree rebuild takes time
@@ -404,6 +387,14 @@ def handle_select(resolve, node_defs: list, append_key: dict, next_key: dict):
             _press_key(user32, next_vk, next_mod, next_mod2)
 
         _dbg(f"[node_toggle_api] select: DONE — navigated to node {idx}/{total} ({title or node_id!r})")
+
+        # Restore modifiers that were held before we started, so the user can
+        # immediately trigger the next hotkey without releasing and re-pressing them.
+        if held_mods:
+            _dbg(f"[node_toggle_api] select: restoring held modifiers {[f'0x{v:02X}' for v in held_mods]}")
+            for vk in held_mods:
+                user32.keybd_event(vk, 0, 0, 0)  # press
+
         return {"status": "ok", "nodeIndex": idx, "totalNodes": total}
 
     except Exception as e:

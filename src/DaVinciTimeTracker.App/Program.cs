@@ -265,6 +265,13 @@ try
     nodeToggleService.ConfigChanged += groups => hotkeyManager.Reload(groups);
     hotkeyManager.HotkeyTriggered += groupId =>
     {
+        // Node action hotkeys are DaVinci-only — silently ignore when another app is focused.
+        if (!WindowsApi.IsDaVinciResolveInFocus())
+        {
+            Log.Debug("NodeToggle: DaVinci not in focus — ignoring hotkey for group {Id}", groupId);
+            return;
+        }
+
         _ = Task.Run(async () =>
         {
             var (success, enabled) = await nodeToggleService.ExecuteByIdAsync(groupId);
