@@ -73,40 +73,44 @@ def bootstrap():
 
 
 # ── Node graph helpers (same logic as before) ─────────────────────────────────
+def _call(obj, method_name, *args):
+    """Safely call obj.method_name(*args), returning None if the method is missing or not callable."""
+    fn = getattr(obj, method_name, None)
+    if not callable(fn):
+        return None
+    try:
+        return fn(*args)
+    except Exception as e:
+        _dbg(f"[node_toggle_api] _call({method_name}) error: {e}")
+        return None
+
+
 def get_graph(resolve, level: str):
     ll = level.lower()
     try:
-        pm = resolve.GetProjectManager()
-        project = pm.GetCurrentProject() if pm else None
+        pm      = _call(resolve, 'GetProjectManager')
+        project = _call(pm, 'GetCurrentProject') if pm else None
         if not project:
             return None, "no_project"
-        timeline = project.GetCurrentTimeline()
+        timeline = _call(project, 'GetCurrentTimeline')
         if not timeline:
             return None, "no_timeline"
 
-        clip_item = None
-        try:
-            if hasattr(timeline, 'GetCurrentVideoItem'):
-                clip_item = timeline.GetCurrentVideoItem()
-        except Exception:
-            pass
+        clip_item = _call(timeline, 'GetCurrentVideoItem')
 
         if ll == "timeline":
-            g = timeline.GetNodeGraph() if hasattr(timeline, 'GetNodeGraph') else None
-            return g, None
+            return _call(timeline, 'GetNodeGraph'), None
         elif ll == "clip":
-            g = clip_item.GetNodeGraph() if clip_item and hasattr(clip_item, 'GetNodeGraph') else None
-            return g, None
+            g = _call(clip_item, 'GetNodeGraph') if clip_item else None
+            return g, (None if g is not None else "clip_graph_unavailable")
         elif ll in ("preclip", "pre-clip"):
-            if clip_item and hasattr(clip_item, 'GetColorGroup'):
-                grp = clip_item.GetColorGroup()
-                g = grp.GetPreClipNodeGraph() if grp and hasattr(grp, 'GetPreClipNodeGraph') else None
-                return g, None
+            grp = _call(clip_item, 'GetColorGroup') if clip_item else None
+            g   = _call(grp, 'GetPreClipNodeGraph') if grp else None
+            return g, (None if g is not None else "preclip_graph_unavailable")
         elif ll in ("postclip", "post-clip"):
-            if clip_item and hasattr(clip_item, 'GetColorGroup'):
-                grp = clip_item.GetColorGroup()
-                g = grp.GetPostClipNodeGraph() if grp and hasattr(grp, 'GetPostClipNodeGraph') else None
-                return g, None
+            grp = _call(clip_item, 'GetColorGroup') if clip_item else None
+            g   = _call(grp, 'GetPostClipNodeGraph') if grp else None
+            return g, (None if g is not None else "postclip_graph_unavailable")
     except Exception as e:
         return None, str(e)
     return None, f"unsupported_level:{level}"
@@ -211,6 +215,202 @@ def handle_toggle(resolve, node_defs: list, action: str):
     return {"status": "error", "message": "all_nodes_failed", "results": results}
 
 
+# ── Key injection helpers (Windows only, ctypes built-in) ─────────────────────
+
+def _parse_vk_dict(d: dict):
+    """Extract vk, optional mod, optional mod2 from {"vk": N, "mod": N, "mod2": N}."""
+    vk   = d.get("vk")   if d else None
+    mod  = d.get("mod")  if d else None
+    mod2 = d.get("mod2") if d else None
+    return vk, mod, mod2
+
+
+_sendinput_defined = False
+_INPUT_type        = None
+
+def _ensure_sendinput_types():
+    import ctypes
+    global _sendinput_defined, _INPUT_type
+    if _sendinput_defined:
+        return
+    class KEYBDINPUT(ctypes.Structure):
+        _fields_ = [
+            ("wVk",         ctypes.c_ushort),
+            ("wScan",       ctypes.c_ushort),
+            ("dwFlags",     ctypes.c_ulong),
+            ("time",        ctypes.c_ulong),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ]
+    class InputUnion(ctypes.Union):
+        _fields_ = [("ki", KEYBDINPUT), ("_pad", ctypes.c_byte * 28)]
+    class INPUT(ctypes.Structure):
+        _fields_ = [("type", ctypes.c_ulong), ("u", InputUnion)]
+    _INPUT_type = INPUT
+    _sendinput_defined = True
+
+
+def _press_key(user32, vk: int, mod=None, mod2=None):
+    """
+    Inject a single key (with up to two modifiers) using SendInput.
+    SendInput is the modern replacement for keybd_event and is more
+    reliably processed by applications like DaVinci Resolve.
+    """
+    import ctypes
+
+    INPUT_KEYBOARD  = 1
+    KEYEVENTF_KEYUP = 0x0002
+
+    _ensure_sendinput_types()
+    INPUT = _INPUT_type
+
+    def make_key(vk_code, flags=0):
+        inp = INPUT()
+        inp.type         = INPUT_KEYBOARD
+        inp.u.ki.wVk     = vk_code
+        # Add hardware scan code — some apps (DaVinci) need it alongside the VK
+        inp.u.ki.wScan   = ctypes.windll.user32.MapVirtualKeyW(vk_code, 0)
+        inp.u.ki.dwFlags = flags
+        return inp
+
+    mods = [m for m in (mod, mod2) if m is not None]
+    _dbg(f"[node_toggle_api] SendInput: vk=0x{vk:02X}({vk}) mods={[f'0x{m:02X}' for m in mods]}")
+
+    events = []
+    for m in mods:
+        events.append(make_key(m))                # mod down
+    events.append(make_key(vk))                   # key down
+    events.append(make_key(vk, KEYEVENTF_KEYUP))  # key up
+    for m in reversed(mods):
+        events.append(make_key(m, KEYEVENTF_KEYUP))  # mod up
+
+    arr  = (INPUT * len(events))(*events)
+    sent = ctypes.windll.user32.SendInput(len(events), arr, ctypes.sizeof(INPUT))
+    if sent != len(events):
+        _dbg(f"[node_toggle_api] SendInput: WARNING only {sent}/{len(events)} events sent")
+
+
+def handle_select(resolve, node_defs: list, append_key: dict, next_key: dict):
+    """
+    Navigate to a specific node using a temp-node anchor technique:
+      1. Append a serial node (DaVinci auto-selects it — always last index).
+      2. Press Backspace — DaVinci deletes the temp node and lands on the last real node.
+      3. Press Next Node × idx — first press wraps to node 1; (idx-1) more reach the target.
+
+    Requires:
+      - append_key: { vk, mod } for 'Add Serial Node' (default Alt+S)
+      - next_key:   { vk, mod } for 'Next Node' (default Alt+Shift+')
+    """
+    if not node_defs:
+        return {"status": "error", "message": "no_nodes"}
+
+    nd    = node_defs[0]
+    level = nd.get("level", "Timeline")
+    node_id = nd.get("nodeId")
+    title   = nd.get("title", "") or ""
+
+    graph, err = get_graph(resolve, level)
+    if not graph:
+        return {"status": "error", "message": f"no_graph:{err}"}
+
+    total = graph.GetNumNodes()
+    if total == 0:
+        return {"status": "error", "message": "empty_graph"}
+
+    idx = find_node_index(graph, node_id, title)
+    if idx is None:
+        return {"status": "error", "message": f"not_found:nodeId={node_id} title={title!r}"}
+
+    append_vk, append_mod, append_mod2 = _parse_vk_dict(append_key)
+    next_vk,   next_mod,   next_mod2   = _parse_vk_dict(next_key)
+
+    _dbg(f"[node_toggle_api] select: target node idx={idx}/{total} level={level} "
+         f"appendKey={append_key} nextKey={next_key}")
+    _dbg(f"[node_toggle_api] select: parsed → "
+         f"append vk=0x{(append_vk or 0):02X} mod={append_mod} mod2={append_mod2}  |  "
+         f"next vk=0x{(next_vk or 0):02X} mod={next_mod} mod2={next_mod2}")
+
+    if not append_vk or not next_vk:
+        _dbg("[node_toggle_api] select: ERROR — missing VK codes, check shortcut config")
+        return {"status": "error", "message": "missing_key_config"}
+
+    try:
+        import ctypes
+        import time
+
+        if not hasattr(ctypes, 'windll'):
+            return {"status": "error", "message": "windows_only"}
+
+        user32 = ctypes.windll.user32
+        VK_BACK    = 0x08  # Backspace
+        VK_CONTROL = 0x11
+        VK_MENU    = 0x12  # Alt
+        VK_SHIFT   = 0x10
+        VK_LWIN    = 0x5B
+        KEYEVENTF_KEYUP = 0x0002
+
+        # ── Find DaVinci window by partial title (handles "DaVinci Resolve - Project") ──
+        def _find_davinci_hwnd():
+            result = ctypes.c_int(0)
+            EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+            def _enum(hwnd, _lp):
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buf = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buf, length + 1)
+                    if buf.value.startswith("DaVinci Resolve"):
+                        result.value = hwnd
+                        return False  # stop enumeration
+                return True
+            user32.EnumWindows(EnumWindowsProc(_enum), 0)
+            return result.value
+
+        hwnd = _find_davinci_hwnd()
+        if hwnd:
+            _dbg(f"[node_toggle_api] select: found DaVinci window hwnd={hwnd}, calling SetForegroundWindow")
+            user32.SetForegroundWindow(hwnd)
+            time.sleep(0.1)  # let the OS complete the focus switch
+            _dbg("[node_toggle_api] select: focus switched to DaVinci")
+        else:
+            _dbg("[node_toggle_api] select: WARNING — DaVinci window not found, injecting to current foreground")
+
+        # ── Release any currently held modifier keys ──────────────────────────────────
+        # When triggered via a hotkey (e.g. Ctrl+Alt+D), those keys may still be
+        # physically held when we start injecting. Releasing them prevents our
+        # injected keystrokes (e.g. Alt+S) from combining with the held modifiers
+        # and accidentally firing other registered hotkeys (e.g. Ctrl+Alt+S = SKIN).
+        for mod_vk in (VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN):
+            if user32.GetAsyncKeyState(mod_vk) & 0x8000:
+                _dbg(f"[node_toggle_api] select: releasing held modifier vk=0x{mod_vk:02X}")
+                user32.keybd_event(mod_vk, 0, KEYEVENTF_KEYUP, 0)
+        time.sleep(0.03)  # let modifier releases settle
+
+        BACKSPACE_DELAY = 0.05  # 50ms after backspace — node tree rebuild takes time
+
+        # Step 1: Append temp serial node → DaVinci auto-selects it (always last)
+        _dbg(f"[node_toggle_api] select: step 1 — append node vk=0x{append_vk:02X} mod={append_mod} mod2={append_mod2}")
+        _press_key(user32, append_vk, append_mod, append_mod2)
+        _dbg(f"[node_toggle_api] select: after step 1 — graph should now have {total+1} nodes")
+
+        # Step 2: Backspace → delete temp node → DaVinci lands on last real node (total)
+        _dbg(f"[node_toggle_api] select: step 2 — backspace vk=0x08")
+        _press_key(user32, VK_BACK)
+        time.sleep(BACKSPACE_DELAY)  # wait for node tree to settle after deletion
+        _dbg(f"[node_toggle_api] select: after step 2 — should be on node {total} now")
+
+        # Step 3: Next × idx → total→(wrap)→1→…→idx
+        _dbg(f"[node_toggle_api] select: step 3 — {idx} × Next Node vk=0x{next_vk:02X} mod={next_mod} mod2={next_mod2}")
+        for i in range(idx):
+            _dbg(f"[node_toggle_api] select:   next press {i+1}/{idx}")
+            _press_key(user32, next_vk, next_mod, next_mod2)
+
+        _dbg(f"[node_toggle_api] select: DONE — navigated to node {idx}/{total} ({title or node_id!r})")
+        return {"status": "ok", "nodeIndex": idx, "totalNodes": total}
+
+    except Exception as e:
+        _dbg(f"[node_toggle_api] select error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 resolve, bootstrap_err = bootstrap()
 if bootstrap_err:
@@ -242,6 +442,10 @@ for line in sys.stdin:
 
         if action == "list":
             _respond(handle_list(resolve))
+        elif action == "select":
+            append_key = cmd.get("appendNodeKey", {})
+            next_key   = cmd.get("nextNodeKey",   {})
+            _respond(handle_select(resolve, node_defs, append_key, next_key))
         elif action in ("on", "off", "toggle"):
             _respond(handle_toggle(resolve, node_defs, action))
         elif action == "get_page":

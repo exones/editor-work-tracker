@@ -2,6 +2,14 @@ using System.Text.Json.Serialization;
 
 namespace DaVinciTimeTracker.Core.NodeToggle;
 
+public enum NodeActionType
+{
+    /// <summary>Toggle nodes on/off (existing behaviour).</summary>
+    Toggle,
+    /// <summary>Navigate to a specific node in the Color page (select/activate it).</summary>
+    Select
+}
+
 public enum NodeLevel
 {
     /// <summary>Timeline-level node graph. Accessible via DaVinci scripting API.</summary>
@@ -46,13 +54,16 @@ public class ToggleGroup
     [JsonPropertyName("hotkey")]
     public string Hotkey { get; set; } = "";
 
+    [JsonPropertyName("actionType")]
+    public NodeActionType ActionType { get; set; } = NodeActionType.Toggle;
+
     [JsonPropertyName("nodes")]
     public List<NodeTarget> Nodes { get; set; } = [];
 
     /// <summary>
     /// Last known enabled state, tracked in memory after each toggle.
     /// null = unknown (will be determined on first execute).
-    /// Not persisted to JSON.
+    /// Not persisted to JSON. Only meaningful for Toggle groups.
     /// </summary>
     [JsonIgnore]
     public bool? CurrentEnabled { get; set; }

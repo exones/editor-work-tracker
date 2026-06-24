@@ -13,6 +13,22 @@ public class UserSettings
     /// <summary>Minutes of no keyboard/mouse input before the user is considered idle. Default 1min.</summary>
     public int InactivityThresholdMinutes { get; set; } = 1;
 
+    // ── Node Actions ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// DaVinci 'Add Serial Node' keyboard shortcut (Color page).
+    /// Used by the Select action to create a temp anchor node.
+    /// Default is the DaVinci Windows default: Alt+S.
+    /// </summary>
+    public string AppendNodeShortcut { get; set; } = "Alt+S";
+
+    /// <summary>
+    /// DaVinci 'Next Node' keyboard shortcut (Color page).
+    /// Used by the Select action to navigate to the target node.
+    /// Windows default: Alt+Shift+Oem7 (Alt+Shift+').
+    /// </summary>
+    public string NextNodeShortcut { get; set; } = "Alt+Shift+Oem7";
+
     // ── Billing ───────────────────────────────────────────────────────────────
 
     public BillingSettings Billing { get; set; } = new();

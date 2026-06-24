@@ -274,12 +274,21 @@ public class ApiController : ControllerBase
     {
         try
         {
-            // "toggle" uses the stateful path (same as hotkey) so state is tracked correctly
-            // across Test presses and hotkey presses. GetNodeEnabled is not available in the
-            // DaVinci scripting API, so state must be tracked in-process.
+            var group = _nodeToggleService.GetById(id);
+
+            // Select action — navigate to the target node
+            if (group?.ActionType == Core.NodeToggle.NodeActionType.Select)
+            {
+                var (selectOk, nodeIndex) = await _nodeToggleService.ExecuteSelectByIdAsync(id);
+                if (selectOk)
+                    return Ok(new { success = true, nodeIndex });
+                return Ok(new { success = false, message = "Select failed — check application logs for details." });
+            }
+
+            // Toggle action — stateful on/off (same as hotkey path)
             var (success, enabled) = action is "on" or "off"
                 ? await _nodeToggleService.ExecuteByIdAsync(id, action)
-                : await _nodeToggleService.ExecuteByIdAsync(id);       // stateful toggle
+                : await _nodeToggleService.ExecuteByIdAsync(id);
 
             if (success)
                 return Ok(new { success = true, enabled });

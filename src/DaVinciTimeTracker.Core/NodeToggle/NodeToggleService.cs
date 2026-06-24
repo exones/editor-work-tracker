@@ -1,3 +1,4 @@
+using DaVinciTimeTracker.Core.Services;
 using Serilog;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -13,10 +14,12 @@ public class NodeToggleService : IDisposable
     private readonly NodeToggleApiClient _apiClient;
     private readonly ILogger _logger;
     private readonly string _configPath;
+    private UserSettingsService? _settingsService;
     private NodeToggleConfigFile _config = new();
     private FileSystemWatcher? _watcher;
     private System.Timers.Timer? _debounceTimer;
     private readonly SemaphoreSlim _fileLock = new(1, 1);
+    private volatile bool _selfWriting; // suppress file-watcher reload during self-writes
     // Per-group execution locks: rapid hotkey presses are dropped while one is in flight
     private readonly Dictionary<string, SemaphoreSlim> _groupLocks = new();
     private bool _disposed;
@@ -50,6 +53,10 @@ public class NodeToggleService : IDisposable
 
     public List<ToggleGroup> GetAll() => [.. _config.Groups];
 
+    /// <summary>Sets the UserSettingsService so select actions can read shortcut config.</summary>
+    public void SetSettingsService(UserSettingsService settingsService) =>
+        _settingsService = settingsService;
+
     /// <summary>
     /// Returns groups including their runtime enabled state for API responses.
     /// CurrentEnabled is [JsonIgnore] on the model (not persisted to file), so this method
@@ -62,7 +69,8 @@ public class NodeToggleService : IDisposable
             g.Name,
             g.Hotkey,
             g.Nodes,
-            currentEnabled = g.CurrentEnabled   // runtime state, not in config JSON
+            actionType     = g.ActionType,       // Toggle | Select
+            currentEnabled = g.CurrentEnabled    // runtime state (Toggle only)
         });
 
     public ToggleGroup? GetById(string id) =>
@@ -95,12 +103,65 @@ public class NodeToggleService : IDisposable
     }
 
     /// <summary>
+    /// Execute the action for the given group id, routing by ActionType.
+    /// For Toggle: stateful on/off. For Select: navigates to the target node.
+    /// </summary>
+    public async Task<(bool Success, bool? Enabled)> ExecuteByIdAsync(string id)
+    {
+        var group = GetById(id);
+        if (group?.ActionType == NodeActionType.Select)
+        {
+            var (ok, _) = await ExecuteSelectByIdAsync(id);
+            return (ok, null);
+        }
+        return await ExecuteToggleByIdAsync(id);
+    }
+
+    /// <summary>Execute a node-select action by group id.</summary>
+    public async Task<(bool Success, int? NodeIndex)> ExecuteSelectByIdAsync(string id)
+    {
+        var group = GetById(id);
+        if (group is null)
+        {
+            _logger.Warning("NodeSelect: group id={Id} not found", id);
+            return (false, null);
+        }
+        if (!group.Nodes.Any())
+        {
+            _logger.Warning("NodeSelect: group '{Name}' has no node configured", group.Name);
+            return (false, null);
+        }
+
+        var sem = GetGroupLock(id);
+        if (!sem.Wait(0))
+        {
+            _logger.Debug("NodeSelect: '{Name}' is busy — dropping rapid hotkey press", group.Name);
+            return (false, null);
+        }
+
+        try
+        {
+            var appendShortcut = _settingsService?.Current.AppendNodeShortcut ?? "Alt+S";
+            var nextShortcut   = _settingsService?.Current.NextNodeShortcut   ?? "Alt+Shift+Oem7";
+
+            _logger.Information("NodeSelect: selecting node in '{Name}' (appendShortcut={A} nextShortcut={N})",
+                group.Name, appendShortcut, nextShortcut);
+
+            return await _apiClient.ExecuteSelectAsync(group.Nodes, appendShortcut, nextShortcut);
+        }
+        finally
+        {
+            sem.Release();
+        }
+    }
+
+    /// <summary>
     /// Execute a toggle for the group with the given id.
     /// Sends an explicit "on"/"off" based on tracked state (GetNodeEnabled is unavailable in
     /// the DaVinci scripting API). Rapid calls are dropped while one execution is in flight
     /// to prevent concurrent Python processes from cancelling each other out.
     /// </summary>
-    public async Task<(bool Success, bool? Enabled)> ExecuteByIdAsync(string id)
+    private async Task<(bool Success, bool? Enabled)> ExecuteToggleByIdAsync(string id)
     {
         var group = GetById(id);
         if (group is null)
@@ -156,12 +217,21 @@ public class NodeToggleService : IDisposable
     public Task<List<AvailableNode>> GetAvailableNodesAsync() =>
         _apiClient.GetAvailableNodesAsync();
 
-    /// <summary>Execute an explicit "on" or "off" action for the group (used by Test button).</summary>
+    /// <summary>
+    /// Execute an explicit "on"/"off"/toggle action for the group (used by Test button via API).
+    /// For Select groups the action param is ignored and node navigation is performed instead.
+    /// </summary>
     public async Task<(bool Success, bool? Enabled)> ExecuteByIdAsync(string id, string action)
     {
         var group = GetById(id);
         if (group is null) return (false, null);
         if (!group.Nodes.Any()) return (false, null);
+
+        if (group.ActionType == NodeActionType.Select)
+        {
+            var (ok, _) = await ExecuteSelectByIdAsync(id);
+            return (ok, null);
+        }
 
         var sem = GetGroupLock(id);
         if (!sem.Wait(0))
@@ -213,6 +283,7 @@ public class NodeToggleService : IDisposable
         try
         {
             _fileLock.Wait();
+            _selfWriting = true;
             var json = JsonSerializer.Serialize(_config, JsonOptions);
             var dir = Path.GetDirectoryName(_configPath)!;
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
@@ -225,6 +296,9 @@ public class NodeToggleService : IDisposable
         finally
         {
             _fileLock.Release();
+            // Clear the flag after a short delay so the watcher event (which fires
+            // asynchronously) is still suppressed, but future external edits are picked up.
+            Task.Delay(600).ContinueWith(_ => _selfWriting = false);
         }
     }
 
@@ -253,7 +327,12 @@ public class NodeToggleService : IDisposable
         _debounceTimer = new System.Timers.Timer(500) { AutoReset = false };
         _debounceTimer.Elapsed += (_, _) =>
         {
-            _logger.Information("NodeToggle: config file changed, reloading...");
+            if (_selfWriting)
+            {
+                _logger.Debug("NodeToggle: ignoring file-watcher event for self-written config");
+                return;
+            }
+            _logger.Information("NodeToggle: config file changed externally, reloading...");
             LoadConfig();
             ConfigChanged?.Invoke(GetAll());
         };

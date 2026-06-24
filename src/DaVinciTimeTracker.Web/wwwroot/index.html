@@ -24,7 +24,7 @@
 
             <nav class="tab-bar">
                 <button class="tab active" onclick="switchTab('projects', this)">📊 Projects</button>
-                <button class="tab" onclick="switchTab('toggles', this)">⌨️ Node Toggles</button>
+                <button class="tab" onclick="switchTab('toggles', this)">⌨️ Node Actions</button>
                 <button class="tab" onclick="switchTab('settings', this)">⚙ Settings</button>
                 <button class="tab" onclick="switchTab('troubleshooter', this)" id="tab-btn-troubleshooter">🔧 Troubleshooter</button>
             </nav>
@@ -42,11 +42,11 @@
                 <div id="tab-toggles" class="tab-pane" style="display:none">
                 <div class="node-toggles-section">
                     <div class="section-header">
-                        <h2>Node Toggles</h2>
-                        <button class="btn btn-primary btn-sm" onclick="showToggleModal()">+ Add Group</button>
+                        <h2>Node Actions</h2>
+                        <button class="btn btn-primary btn-sm" onclick="showToggleModal()">+ Add Action</button>
                     </div>
                     <p class="section-hint">
-                        Define groups of DaVinci Resolve nodes to toggle on/off with a global hotkey.
+                        Toggle nodes on/off, or select (navigate to) a specific node — all via global hotkeys.
                         Identify nodes by Node ID (stable) and/or title.
                     </p>
                     <div id="toggles-container">
@@ -86,10 +86,10 @@
             </footer>
         </div>
 
-        <!-- Node Toggle Add/Edit Modal -->
+        <!-- Node Action Add/Edit Modal -->
         <div id="toggle-modal" class="modal modal-wide">
             <div class="modal-content">
-                <h2 id="toggle-modal-title">Add Toggle Group</h2>
+                <h2 id="toggle-modal-title">Add Node Action</h2>
 
                 <div class="form-group">
                     <label>Group Name</label>
@@ -102,8 +102,16 @@
                 </div>
 
                 <div class="form-group">
+                    <label>Action Type</label>
+                    <select id="toggle-action-type" onchange="_updateModalForActionType(this.value === 'Select')">
+                        <option value="Toggle">Toggle — enable/disable nodes</option>
+                        <option value="Select">Select — navigate to a specific node</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
                     <label>
-                        Nodes
+                        Node(s)
                         <button class="btn btn-sm btn-load-nodes" id="load-nodes-btn" onclick="loadNodesFromDaVinci()" title="Load live node list from DaVinci Resolve">
                             ⟳ Load from DaVinci
                         </button>
@@ -111,7 +119,7 @@
                     </label>
                     <div id="toggle-nodes-list"></div>
                     <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="addNodeRow()">+ Add node</button>
-                    <p class="field-hint">Load from DaVinci to get a dropdown of live nodes per level. Or type a Node ID / Title manually (Node ID is more stable).</p>
+                    <p class="field-hint">Load from DaVinci to get a dropdown of live nodes per level. Or type a Node ID / Title manually (Node ID is more stable). Select actions use only the first node.</p>
                 </div>
 
                 <div class="modal-buttons">

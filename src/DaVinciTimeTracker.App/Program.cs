@@ -258,6 +258,7 @@ try
 
     // Now that Python is resolved, wire the correct executable into NodeToggleService and diagnostics
     nodeToggleService.SetPythonExecutable(pythonPath, AppPaths.NodeToggleScriptPath);
+    nodeToggleService.SetSettingsService(userSettingsService);
     diagnosticsServiceEarly.UpdatePythonPath(pythonPath);
     var hotkeyManager = HotkeyManagerFactory.Create(Log.Logger);
     hotkeyManager.Reload(nodeToggleService.GetAll());

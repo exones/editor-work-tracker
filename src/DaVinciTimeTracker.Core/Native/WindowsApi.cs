@@ -18,6 +18,10 @@ public static class WindowsApi
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+    [SupportedOSPlatform("windows")]
+    [DllImport("user32.dll")]
+    public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
     public const uint MOD_ALT     = 0x0001;
     public const uint MOD_CONTROL = 0x0002;
     public const uint MOD_SHIFT   = 0x0004;

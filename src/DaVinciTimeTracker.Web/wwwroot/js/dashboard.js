@@ -372,7 +372,7 @@ refreshInterval = setInterval(refresh, 5000);
 // Health pill refreshes every 15 seconds
 setInterval(fetchBridgeHealth, 15000);
 
-// ── Node Toggle Panel ─────────────────────────────────────────────────────────
+// ── Node Actions Panel ────────────────────────────────────────────────────────
 
 let editingToggleId = null; // null = creating new
 
@@ -382,23 +382,27 @@ async function fetchNodeToggles() {
         const groups = await response.json();
         renderNodeToggles(groups);
     } catch (error) {
-        console.error("Failed to fetch node toggles:", error);
+        console.error("Failed to fetch node actions:", error);
         document.getElementById("toggles-container").innerHTML =
-            '<p class="loading">Failed to load node toggles.</p>';
+            '<p class="loading">Failed to load node actions.</p>';
     }
 }
 
 function renderNodeToggles(groups) {
     const container = document.getElementById("toggles-container");
     if (!groups || groups.length === 0) {
-        container.innerHTML = '<p class="no-projects">No toggle groups configured. Click "+ Add Group" to create one.</p>';
+        container.innerHTML = '<p class="no-projects">No actions configured. Click "+ Add Action" to create one.</p>';
         return;
     }
 
     container.innerHTML = groups.map(g => {
-        const stateLabel = g.currentEnabled === true  ? '<span class="toggle-state on">ON</span>'
+        const isSelect = g.actionType === "Select";
+
+        const stateLabel = isSelect
+            ? '<span class="toggle-state select-type" title="Select action — navigates to the target node">→ Select</span>'
+            : (g.currentEnabled === true  ? '<span class="toggle-state on">ON</span>'
             : g.currentEnabled === false ? '<span class="toggle-state off">OFF</span>'
-            : '<span class="toggle-state unknown" title="Press Test once to sync (first press always disables)">? unknown</span>';
+            : '<span class="toggle-state unknown" title="Press Test once to sync (first press always disables)">? unknown</span>');
 
         const nodeList = (g.nodes || []).map(n => {
             const id = n.nodeId != null ? `#${n.nodeId}` : "";
@@ -406,6 +410,11 @@ function renderNodeToggles(groups) {
             const label = [id, title].filter(Boolean).join(" ");
             return `<span class="node-chip">${label} <em>(${n.level})</em></span>`;
         }).join(" ");
+
+        const syncBtn = isSelect ? '' :
+            `<button class="btn btn-sm btn-sync" onclick="syncState('${g.id}')" title="Tell the app nodes are currently ON (sync after manual DaVinci change)">↺ Sync ON</button>`;
+
+        const testTitle = isSelect ? "Navigate to target node now" : "Toggle nodes now (alternates ON/OFF)";
 
         return `
         <div class="toggle-card">
@@ -416,8 +425,8 @@ function renderNodeToggles(groups) {
                     ${stateLabel}
                 </div>
                 <div class="toggle-actions">
-                    <button class="btn btn-sm btn-test" onclick="executeToggle('${g.id}')" title="Toggle nodes now (alternates ON/OFF)">▶ Test</button>
-                    <button class="btn btn-sm btn-sync" onclick="syncState('${g.id}')" title="Tell the app nodes are currently ON (sync after manual DaVinci change)">↺ Sync ON</button>
+                    <button class="btn btn-sm btn-test" onclick="executeAction('${g.id}', ${isSelect})" title="${testTitle}">▶ Test</button>
+                    ${syncBtn}
                     <button class="btn btn-sm btn-secondary" onclick="editToggleGroup('${g.id}')" title="Edit">✏️</button>
                     <button class="btn-delete" onclick="deleteToggleGroup('${g.id}', '${escapeHtml(g.name)}')" title="Delete">🗑️</button>
                 </div>
@@ -435,27 +444,36 @@ async function syncState(id) {
     } catch { showNotification("Sync failed", "error"); }
 }
 
-async function executeToggle(id) {
+async function executeAction(id, isSelect = false) {
     try {
         const response = await fetch(`${API_BASE}/api/node-toggles/${id}/execute`, { method: "POST" });
         const result = await response.json();
         if (result.success) {
-            const state = result.enabled ? "enabled" : "disabled";
-            showNotification(`Toggled → ${state}`, "success");
+            if (isSelect) {
+                showNotification(`Selected node ${result.nodeIndex}`, "success");
+            } else {
+                const state = result.enabled ? "enabled" : "disabled";
+                showNotification(`Toggled → ${state}`, "success");
+            }
             fetchNodeToggles();
         } else {
-            showNotification(result.message || "Toggle failed — check logs", "error");
+            showNotification(result.message || "Action failed — check logs", "error");
         }
     } catch (error) {
-        showNotification("Toggle request failed", "error");
+        showNotification("Action request failed", "error");
     }
 }
 
 function showToggleModal(group = null) {
     editingToggleId = group ? group.id : null;
-    document.getElementById("toggle-modal-title").textContent = group ? "Edit Toggle Group" : "Add Toggle Group";
+    document.getElementById("toggle-modal-title").textContent = group ? "Edit Node Action" : "Add Node Action";
     document.getElementById("toggle-name").value = group ? group.name : "";
     document.getElementById("toggle-hotkey").value = group ? group.hotkey : "";
+
+    // Action type selector
+    const isSelect = group?.actionType === "Select";
+    document.getElementById("toggle-action-type").value = isSelect ? "Select" : "Toggle";
+    _updateModalForActionType(isSelect);
 
     const nodesList = document.getElementById("toggle-nodes-list");
     nodesList.innerHTML = "";
@@ -464,6 +482,18 @@ function showToggleModal(group = null) {
     else nodes.forEach(n => addNodeRow(n));
 
     document.getElementById("toggle-modal").style.display = "flex";
+}
+
+function _updateModalForActionType(isSelect) {
+    const addBtn = document.querySelector('#toggle-modal button[onclick="addNodeRow()"]');
+    const nodesLabel = document.querySelector('#toggle-modal label[for="toggle-nodes-list"], #toggle-modal .form-group label');
+    if (addBtn) addBtn.style.display = isSelect ? "none" : "";
+
+    // Keep only the first node row for Select
+    if (isSelect) {
+        const rows = document.querySelectorAll("#toggle-nodes-list .node-row");
+        rows.forEach((r, i) => { if (i > 0) r.remove(); });
+    }
 }
 
 function hideToggleModal() {
@@ -570,7 +600,8 @@ async function saveToggleGroup() {
 
     if (!valid) { showNotification("Each node needs at least a Node ID or Title", "error"); return; }
 
-    const group = { name, hotkey, nodes };
+    const actionType = document.getElementById("toggle-action-type")?.value || "Toggle";
+    const group = { name, hotkey, actionType, nodes };
     if (editingToggleId) group.id = editingToggleId;
 
     try {
@@ -836,6 +867,27 @@ function renderSettings(s) {
             <hr class="settings-divider" />
 
             <div class="settings-section-header">
+                <h3>Node Actions</h3>
+                <p class="settings-hint">Keyboard shortcuts DaVinci uses for node navigation. Must match what you have assigned in DaVinci Resolve → Keyboard Customization → Color → Nodes.</p>
+            </div>
+
+            <div class="settings-field">
+                <label>Append Serial Node shortcut</label>
+                <p class="settings-hint">Used by Select actions to create a temporary anchor node. DaVinci default: Alt+S.</p>
+                <input type="text" id="setting-appendNodeShortcut" class="settings-input"
+                       value="${s.appendNodeShortcut ?? 'Alt+S'}" placeholder="Alt+S" />
+            </div>
+
+            <div class="settings-field">
+                <label>Next Node shortcut</label>
+                <p class="settings-hint">Used by Select actions to navigate forward through nodes. DaVinci Windows default: Alt+Shift+' (tick).</p>
+                <input type="text" id="setting-nextNodeShortcut" class="settings-input"
+                       value="${s.nextNodeShortcut ?? 'Alt+Shift+Oem7'}" placeholder="Alt+Shift+Oem7" />
+            </div>
+
+            <hr class="settings-divider" />
+
+            <div class="settings-section-header">
                 <h3>Billing</h3>
                 <p class="settings-hint">Configure hourly rates to calculate project costs. Leave rates at 0 to disable cost display.</p>
             </div>
@@ -889,6 +941,8 @@ async function saveSettings() {
         graceStartSeconds:          parseInt(document.getElementById('setting-graceStartSeconds').value,  10),
         graceEndMinutes:            parseInt(document.getElementById('setting-graceEndMinutes').value,    10),
         inactivityThresholdMinutes: parseInt(document.getElementById('setting-inactivityThresholdMinutes').value, 10),
+        appendNodeShortcut: document.getElementById('setting-appendNodeShortcut').value.trim() || 'Alt+S',
+        nextNodeShortcut:   document.getElementById('setting-nextNodeShortcut').value.trim()   || 'Alt+Shift+Oem7',
         billing: {
             currency:                    document.getElementById('setting-currency').value.trim().toUpperCase() || 'USD',
             defaultUserRatePerHour:       parseFloat(document.getElementById('setting-defaultUserRate').value)       || 0,

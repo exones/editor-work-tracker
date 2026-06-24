@@ -13,8 +13,8 @@ namespace DaVinciTimeTracker.App.Hotkeys;
 /// Creates a hidden message-only NativeWindow to receive WM_HOTKEY messages.
 /// Hotkey strings are parsed as: [Modifier+]Key, e.g. "Ctrl+Alt+D", "Shift+F5".
 ///
-/// If the TFM ever changes from net9.0-windows* to net9.0, wrap this class
-/// in #if WINDOWS to prevent compilation on non-Windows toolchains.
+/// Cross-thread Reload calls are marshaled back to the owning thread via PostMessage
+/// so that RegisterHotKey/UnregisterHotKey always run on the thread that owns _window.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsHotkeyManager : IHotkeyManager
@@ -28,19 +28,57 @@ public sealed class WindowsHotkeyManager : IHotkeyManager
     private readonly Dictionary<string, int> _registrations = new();
     private int _nextId = 1;
 
-    private const int WM_HOTKEY = 0x0312;
+    // Thread ID of the thread that created _window — Reload must run on this thread.
+    private readonly int _ownerThreadId;
+
+    // Pending groups for cross-thread reload; swapped atomically then retrieved in WndProc.
+    private volatile List<ToggleGroup>? _pendingGroups;
+
+    private const int WM_HOTKEY    = 0x0312;
+    private const uint WM_APP_RELOAD = 0x8001; // WM_APP + 1, private to this window
 
     public WindowsHotkeyManager(ILogger logger)
     {
         _logger = logger;
+        _ownerThreadId = Thread.CurrentThread.ManagedThreadId;
 
         // NativeWindow must be created on the UI thread (STA); the WinForms
         // message loop handles WM_HOTKEY dispatching automatically.
         _window = new HotkeyWindow();
-        _window.HotkeyReceived += OnHotkeyReceived;
+        _window.HotkeyReceived   += OnHotkeyReceived;
+        _window.ReloadRequested  += OnReloadRequested;
     }
 
+    /// <summary>
+    /// Re-registers all hotkeys from the given group list.
+    /// Safe to call from any thread — cross-thread calls are marshaled via PostMessage.
+    /// </summary>
     public void Reload(IEnumerable<ToggleGroup> groups)
+    {
+        var list = groups.ToList();
+
+        if (Thread.CurrentThread.ManagedThreadId == _ownerThreadId)
+        {
+            // Already on the correct thread — execute directly.
+            ReloadCore(list);
+            return;
+        }
+
+        // Wrong thread: stash the groups and post a message to the owning window.
+        // WndProc on the owner thread will pick it up and call ReloadCore.
+        Interlocked.Exchange(ref _pendingGroups, list);
+        if (_window != null)
+            WindowsApi.PostMessage(_window.Handle, WM_APP_RELOAD, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    private void OnReloadRequested()
+    {
+        var list = Interlocked.Exchange(ref _pendingGroups, null);
+        if (list is not null)
+            ReloadCore(list);
+    }
+
+    private void ReloadCore(IEnumerable<ToggleGroup> groups)
     {
         UnregisterAll();
 
@@ -132,6 +170,7 @@ public sealed class WindowsHotkeyManager : IHotkeyManager
     private sealed class HotkeyWindow : NativeWindow
     {
         public event Action<int>? HotkeyReceived;
+        public event Action?      ReloadRequested;
 
         public HotkeyWindow()
         {
@@ -143,6 +182,8 @@ public sealed class WindowsHotkeyManager : IHotkeyManager
         {
             if (m.Msg == WM_HOTKEY)
                 HotkeyReceived?.Invoke(m.WParam.ToInt32());
+            else if (m.Msg == WM_APP_RELOAD)
+                ReloadRequested?.Invoke();
             base.WndProc(ref m);
         }
     }
