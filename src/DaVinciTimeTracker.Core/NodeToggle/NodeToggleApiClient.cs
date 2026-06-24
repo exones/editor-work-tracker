@@ -8,22 +8,35 @@ namespace DaVinciTimeTracker.Core.NodeToggle;
 /// Thin protocol layer over PythonDaemon.
 /// Knows the DaVinci node-toggle command format; delegates all process
 /// management (start, restart, health) to PythonDaemon.
+///
+/// Three daemons are maintained by concern:
+///   _toggleDaemon    — on/off/toggle: hotkey-triggered, must respond immediately
+///   _keystrokeDaemon — select + any future keystroke injection: may hold for hundreds of ms
+///   _backgroundDaemon — diagnose, list, ping: background queries that can wait
 /// </summary>
 public sealed class NodeToggleApiClient : IDisposable
 {
-    private readonly PythonDaemon _daemon;
+    private readonly PythonDaemon _toggleDaemon;
+    private readonly PythonDaemon _keystrokeDaemon;
+    private readonly PythonDaemon _backgroundDaemon;
     private readonly ILogger _logger;
 
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     public NodeToggleApiClient(ILogger logger)
     {
-        _daemon = new PythonDaemon(logger);
-        _logger = logger;
+        _toggleDaemon     = new PythonDaemon(logger);
+        _keystrokeDaemon  = new PythonDaemon(logger);
+        _backgroundDaemon = new PythonDaemon(logger);
+        _logger       = logger;
     }
 
-    public void SetPythonExecutable(string pythonPath, string scriptPath) =>
-        _daemon.Configure(pythonPath, scriptPath);
+    public void SetPythonExecutable(string pythonPath, string scriptPath)
+    {
+        _toggleDaemon.Configure(pythonPath, scriptPath);
+        _keystrokeDaemon.Configure(pythonPath, scriptPath);
+        _backgroundDaemon.Configure(pythonPath, scriptPath);
+    }
 
     // ── Commands ──────────────────────────────────────────────────────────────
 
@@ -31,7 +44,7 @@ public sealed class NodeToggleApiClient : IDisposable
     {
         _logger.Information("NodeToggle: requesting node list from DaVinci");
         var cmd = JsonSerializer.Serialize(new { action = "list" });
-        var resp = await _daemon.SendAsync(cmd);
+        var resp = await _backgroundDaemon.SendAsync(cmd);
 
         if (resp?["status"]?.GetValue<string>() == "ok")
         {
@@ -61,7 +74,7 @@ public sealed class NodeToggleApiClient : IDisposable
             })
         });
 
-        var resp = await _daemon.SendAsync(cmd);
+        var resp = await _toggleDaemon.SendAsync(cmd);  // dedicated toggle daemon — immediate hotkey response
 
         if (resp?["status"]?.GetValue<string>() == "ok")
         {
@@ -106,7 +119,7 @@ public sealed class NodeToggleApiClient : IDisposable
         });
 
         _logger.Information("NodeSelect: sending command: {Cmd}", cmd);
-        var resp = await _daemon.SendAsync(cmd);
+        var resp = await _keystrokeDaemon.SendAsync(cmd);  // keystroke daemon — never blocks scripting operations
         _logger.Information("NodeSelect: daemon response: {Resp}", resp?.ToJsonString());
 
         if (resp?["status"]?.GetValue<string>() == "ok")
@@ -230,7 +243,7 @@ public sealed class NodeToggleApiClient : IDisposable
     public async Task<JsonNode?> SendDiagnoseAsync()
     {
         var cmd = JsonSerializer.Serialize(new { action = "diagnose" });
-        return await _daemon.SendAsync(cmd);
+        return await _backgroundDaemon.SendAsync(cmd);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -249,5 +262,10 @@ public sealed class NodeToggleApiClient : IDisposable
             _logger.Warning("  → fusionscript IPC failure — check Python compatibility");
     }
 
-    public void Dispose() => _daemon.Dispose();
+    public void Dispose()
+    {
+        _toggleDaemon.Dispose();
+        _keystrokeDaemon.Dispose();
+        _backgroundDaemon.Dispose();
+    }
 }
