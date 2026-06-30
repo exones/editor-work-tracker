@@ -197,17 +197,7 @@ try
     });
 
     // Initialize tracking services
-    var scriptPath = AppPaths.PythonScriptPath;
-    if (!File.Exists(scriptPath))
-    {
-        var errorMsg = $"Python script not found at: {scriptPath}";
-        Log.Fatal(errorMsg);
-        MessageBox.Show(errorMsg, "Script Not Found", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        return;
-    }
-
-    // Pass scriptPath so the resolver can test fusionscript compatibility when DaVinci is running
-    var pythonPath = PythonPathResolver.FindPythonExecutable(Log.Logger, scriptPath);
+    var pythonPath = PythonPathResolver.FindPythonExecutable(Log.Logger, AppPaths.NodeToggleScriptPath);
     if (pythonPath == null)
     {
         const string troubleshooterHint = "\n\nOpen the Troubleshooter in the dashboard (http://localhost:5555 → 🔧 Troubleshooter tab) for guided diagnosis and fix options.";
@@ -226,10 +216,10 @@ try
     }
 
     Log.Information("Using Python: {PythonPath}", pythonPath);
-    Log.Information("Using script: {ScriptPath}", scriptPath);
+    Log.Information("Using script: {ScriptPath}", AppPaths.NodeToggleScriptPath);
 
-    var resolveApiClient = new ResolveApiClient(pythonPath, scriptPath, Log.Logger);
-    var resolveMonitor   = new DaVinciResolveMonitor(resolveApiClient, trackingContext, systemActivity, Log.Logger);
+    var resolveMonitor = new DaVinciResolveMonitor(
+        nodeToggleService.GetApiClient(), trackingContext, systemActivity, Log.Logger);
     var activityMonitor  = new ActivityMonitor(trackingContext, systemActivity, Log.Logger, checkIntervalMs: 5000,
         inactivityThresholdMinutes: userSettingsService.Current.InactivityThresholdMinutes);
     // sessionManager was already created before the web server — reuse it

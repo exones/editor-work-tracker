@@ -74,11 +74,6 @@ public static class AppPaths
     public static string ApplicationDirectory => AppDomain.CurrentDomain.BaseDirectory;
 
     /// <summary>
-    /// Gets the path to the Python script
-    /// </summary>
-    public static string PythonScriptPath => Path.Combine(ApplicationDirectory, "resolve_api.py");
-
-    /// <summary>
     /// Gets the path to the wwwroot directory
     /// </summary>
     public static string WwwRootPath => Path.Combine(ApplicationDirectory, "wwwroot");

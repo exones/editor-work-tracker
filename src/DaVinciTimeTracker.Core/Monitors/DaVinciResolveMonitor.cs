@@ -9,20 +9,19 @@ namespace DaVinciTimeTracker.Core.Monitors;
 
 public class DaVinciResolveMonitor : IMonitor, IDisposable
 {
-    private readonly ResolveApiClient       _apiClient;
-    private readonly TrackingContext        _context;
+    private readonly ResolveScriptingClient  _scriptingClient;
+    private readonly TrackingContext         _context;
     private readonly ISystemActivityProvider _systemActivity;
-    private readonly ILogger                _logger;
-    private readonly Timer                  _pollTimer;
+    private readonly ILogger                 _logger;
+    private readonly Timer                   _pollTimer;
 
-    // Internal state for edge-event detection (page/timeline/render still use events for ActivityTracker)
+    // Internal state for edge-event detection
     private string? _currentProject;
     private string? _currentPage;
     private string? _currentTimeline;
     private bool    _isRendering;
     private bool    _disposed;
     private bool    _wasProcessRunning;
-    private bool    _sanityCheckPassed;
 
     // Properties still read by ActivityTracker directly
     public string? CurrentPage     => _currentPage;
@@ -36,17 +35,17 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
     public event EventHandler?         RenderingStopped;
 
     public DaVinciResolveMonitor(
-        ResolveApiClient apiClient,
+        ResolveScriptingClient scriptingClient,
         TrackingContext context,
         ISystemActivityProvider systemActivity,
         ILogger logger,
         int pollIntervalMs = 2000)
     {
-        _apiClient      = apiClient;
-        _context        = context;
-        _systemActivity = systemActivity;
-        _logger         = logger;
-        _pollTimer      = new Timer(pollIntervalMs);
+        _scriptingClient = scriptingClient;
+        _context         = context;
+        _systemActivity  = systemActivity;
+        _logger          = logger;
+        _pollTimer       = new Timer(pollIntervalMs);
         _pollTimer.Elapsed += OnTimerElapsed;
     }
 
@@ -81,30 +80,24 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
                 _currentPage     = null;
                 _currentTimeline = null;
                 _isRendering     = false;
-                _context.UpdateResolve(null, null, null, false, resolveRunning: false);
+                _context.UpdateResolve(null, null, null, false, resolveRunning: false, scriptingBridgeOk: false);
             }
             else
             {
-                // Keep context in sync even when already null
-                _context.UpdateResolve(null, null, null, false, resolveRunning: false);
+                _context.UpdateResolve(null, null, null, false, resolveRunning: false, scriptingBridgeOk: false);
             }
             _wasProcessRunning = false;
-            _sanityCheckPassed = false;
             return;
         }
 
         if (!_wasProcessRunning)
         {
-            _logger.Information("DaVinci Resolve process detected — running connection sanity check...");
+            _logger.Information("DaVinci Resolve process detected — connecting via scripting daemon...");
             _wasProcessRunning = true;
-            _sanityCheckPassed = await _apiClient.RunSanityCheckAsync();
-            if (!_sanityCheckPassed)
-            {
-                _logger.Error("DaVinci API sanity check FAILED — tracking may not work correctly");
-            }
         }
 
-        var status      = await _apiClient.GetCurrentProjectNameAsync();
+        var (status, bridgeOk) = await _scriptingClient.GetCurrentStatusAsync();
+
         var projectName = status.ProjectName;
         var page        = status.Page;
         var timeline    = status.Timeline;
@@ -124,8 +117,9 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
             _isRendering     = false;
         }
 
-        // Always push current resolve state to context (Resolve is running at this point)
-        _context.UpdateResolve(projectName, _currentPage, _currentTimeline, _isRendering, resolveRunning: true);
+        // Push resolve state and bridge health to context
+        _context.UpdateResolve(projectName, _currentPage, _currentTimeline, _isRendering,
+            resolveRunning: true, scriptingBridgeOk: bridgeOk);
 
         if (_currentProject == null) return;
 
@@ -134,7 +128,8 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
         {
             _logger.Debug("DaVinci page changed: {OldPage} → {NewPage}", _currentPage, page);
             _currentPage = page;
-            _context.UpdateResolve(_currentProject, _currentPage, _currentTimeline, _isRendering, resolveRunning: true);
+            _context.UpdateResolve(_currentProject, _currentPage, _currentTimeline, _isRendering,
+                resolveRunning: true, scriptingBridgeOk: bridgeOk);
             PageChanged?.Invoke(this, page);
         }
 
@@ -143,7 +138,8 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
         {
             _logger.Debug("DaVinci timeline changed: {OldTimeline} → {NewTimeline}", _currentTimeline, timeline);
             _currentTimeline = timeline;
-            _context.UpdateResolve(_currentProject, _currentPage, _currentTimeline, _isRendering, resolveRunning: true);
+            _context.UpdateResolve(_currentProject, _currentPage, _currentTimeline, _isRendering,
+                resolveRunning: true, scriptingBridgeOk: bridgeOk);
             TimelineChanged?.Invoke(this, timeline);
         }
 
@@ -152,14 +148,16 @@ public class DaVinciResolveMonitor : IMonitor, IDisposable
         {
             _logger.Information("DaVinci rendering started");
             _isRendering = true;
-            _context.UpdateResolve(_currentProject, _currentPage, _currentTimeline, true, resolveRunning: true);
+            _context.UpdateResolve(_currentProject, _currentPage, _currentTimeline, true,
+                resolveRunning: true, scriptingBridgeOk: bridgeOk);
             RenderingStarted?.Invoke(this, EventArgs.Empty);
         }
         else if (!isRendering && _isRendering)
         {
             _logger.Information("DaVinci rendering stopped");
             _isRendering = false;
-            _context.UpdateResolve(_currentProject, _currentPage, _currentTimeline, false, resolveRunning: true);
+            _context.UpdateResolve(_currentProject, _currentPage, _currentTimeline, false,
+                resolveRunning: true, scriptingBridgeOk: bridgeOk);
             RenderingStopped?.Invoke(this, EventArgs.Empty);
         }
     }

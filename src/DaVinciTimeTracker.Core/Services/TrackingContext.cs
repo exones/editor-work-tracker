@@ -10,11 +10,12 @@ public sealed class TrackingContext
     private readonly object _lock = new();
 
     // ── Resolve state (written by DaVinciResolveMonitor) ─────────────────────
-    public bool     IsResolveRunning { get; private set; }
-    public string?  Project          { get; private set; }
-    public string?  Page             { get; private set; }
-    public string?  Timeline         { get; private set; }
-    public bool     IsRendering      { get; private set; }
+    public bool     IsResolveRunning   { get; private set; }
+    public bool     ScriptingBridgeOk  { get; private set; }
+    public string?  Project            { get; private set; }
+    public string?  Page               { get; private set; }
+    public string?  Timeline           { get; private set; }
+    public bool     IsRendering        { get; private set; }
 
     // ── OS activity state (written by ActivityMonitor + DaVinciResolveMonitor) ──
     public bool     IsInFocus    { get; private set; }
@@ -27,16 +28,17 @@ public sealed class TrackingContext
 
     // ── Writes ────────────────────────────────────────────────────────────────
 
-    public void UpdateResolve(string? project, string? page, string? timeline, bool rendering, bool resolveRunning)
+    public void UpdateResolve(string? project, string? page, string? timeline, bool rendering, bool resolveRunning, bool scriptingBridgeOk = false)
     {
         lock (_lock)
         {
-            IsResolveRunning = resolveRunning;
-            Project          = project;
-            Page             = page;
-            Timeline         = timeline;
-            IsRendering      = rendering;
-            LastUpdated      = DateTime.UtcNow;
+            IsResolveRunning  = resolveRunning;
+            ScriptingBridgeOk = scriptingBridgeOk;
+            Project           = project;
+            Page              = page;
+            Timeline          = timeline;
+            IsRendering       = rendering;
+            LastUpdated       = DateTime.UtcNow;
         }
     }
 
@@ -68,7 +70,7 @@ public sealed class TrackingContext
     {
         lock (_lock)
             return new TrackingSnapshot(
-                IsResolveRunning, Project, Page, Timeline,
+                IsResolveRunning, ScriptingBridgeOk, Project, Page, Timeline,
                 IsRendering, IsInFocus, IsUserActive,
                 LastActivityChange, LastFocusChange);
     }
@@ -77,6 +79,7 @@ public sealed class TrackingContext
 /// <summary>Immutable point-in-time view of TrackingContext, consumed by SessionManager.Tick.</summary>
 public record TrackingSnapshot(
     bool     IsResolveRunning,
+    bool     ScriptingBridgeOk,
     string?  Project,
     string?  Page,
     string?  Timeline,
@@ -88,6 +91,6 @@ public record TrackingSnapshot(
 {
     /// <summary>Sentinel used on shutdown: no project, no focus, no activity — ends any open session.</summary>
     public static readonly TrackingSnapshot Closed = new(
-        false, null, null, null, false, false, false,
+        false, false, null, null, null, false, false, false,
         DateTime.UtcNow, DateTime.UtcNow);
 }

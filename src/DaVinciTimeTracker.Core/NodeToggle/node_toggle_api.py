@@ -439,6 +439,26 @@ for line in sys.stdin:
             _respond(handle_select(resolve, node_defs, append_key, next_key))
         elif action in ("on", "off", "toggle"):
             _respond(handle_toggle(resolve, node_defs, action))
+        elif action == "status":
+            # Lightweight poll — project/page/timeline/rendering, no edition/version overhead
+            pm = resolve.GetProjectManager()
+            project = pm.GetCurrentProject() if pm else None
+            if project:
+                project_name = project.GetName()
+                page = resolve.GetCurrentPage()
+                try:
+                    tl = project.GetCurrentTimeline()
+                    timeline_name = (tl.GetName() if tl else None) or None
+                except Exception:
+                    timeline_name = None
+                try:
+                    is_rendering = bool(project.IsRenderingInProgress())
+                except Exception:
+                    is_rendering = False
+                _respond({"status": "ok", "project": project_name,
+                          "page": page, "timeline": timeline_name, "rendering": is_rendering})
+            else:
+                _respond({"status": "ok", "project": None})
         elif action == "get_page":
             # GetCurrentPage() only works reliably from a persistent connection (returns None in fresh processes)
             page = resolve.GetCurrentPage()

@@ -30,10 +30,6 @@
 
     <ItemGroup>
         <!-- Copy Python scripts from Core project to App output -->
-        <Content Include="..\DaVinciTimeTracker.Core\Resolve\resolve_api.py">
-            <Link>resolve_api.py</Link>
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </Content>
         <Content Include="..\DaVinciTimeTracker.Core\NodeToggle\node_toggle_api.py">
             <Link>node_toggle_api.py</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

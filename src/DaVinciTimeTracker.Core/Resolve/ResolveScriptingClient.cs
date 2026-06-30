@@ -1,20 +1,22 @@
 using Serilog;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using DaVinciTimeTracker.Core.NodeToggle;
 
-namespace DaVinciTimeTracker.Core.NodeToggle;
+namespace DaVinciTimeTracker.Core.Resolve;
 
 /// <summary>
 /// Thin protocol layer over PythonDaemon.
-/// Knows the DaVinci node-toggle command format; delegates all process
-/// management (start, restart, health) to PythonDaemon.
+/// Single entry-point for all DaVinci Resolve scripting operations: node toggle/select,
+/// background queries (list, diagnose, ping), and the lightweight status poll used by
+/// DaVinciResolveMonitor every 2 seconds.
 ///
 /// Three daemons are maintained by concern:
 ///   _toggleDaemon    — on/off/toggle: hotkey-triggered, must respond immediately
 ///   _keystrokeDaemon — select + any future keystroke injection: may hold for hundreds of ms
-///   _backgroundDaemon — diagnose, list, ping: background queries that can wait
+///   _backgroundDaemon — status, diagnose, list, ping: background queries that can wait
 /// </summary>
-public sealed class NodeToggleApiClient : IDisposable
+public sealed class ResolveScriptingClient : IDisposable
 {
     private readonly PythonDaemon _toggleDaemon;
     private readonly PythonDaemon _keystrokeDaemon;
@@ -23,12 +25,12 @@ public sealed class NodeToggleApiClient : IDisposable
 
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
-    public NodeToggleApiClient(ILogger logger)
+    public ResolveScriptingClient(ILogger logger)
     {
         _toggleDaemon     = new PythonDaemon(logger);
         _keystrokeDaemon  = new PythonDaemon(logger);
         _backgroundDaemon = new PythonDaemon(logger);
-        _logger       = logger;
+        _logger           = logger;
     }
 
     public void SetPythonExecutable(string pythonPath, string scriptPath)
@@ -38,12 +40,47 @@ public sealed class NodeToggleApiClient : IDisposable
         _backgroundDaemon.Configure(pythonPath, scriptPath);
     }
 
-    // ── Commands ──────────────────────────────────────────────────────────────
+    /// <summary>True when the background daemon is connected and ready to respond.</summary>
+    public bool IsBackgroundDaemonReady => _backgroundDaemon.IsReady;
+
+    // ── Status poll (replaces per-call process spawn) ─────────────────────────
+
+    /// <summary>
+    /// Lightweight poll: returns current project/page/timeline/rendering from the
+    /// background daemon. Called every 2 s by DaVinciResolveMonitor.
+    /// Returns ResolveStatus.Empty on daemon error or when no project is open.
+    /// Also returns whether the daemon responded at all (out bridgeOk) so the
+    /// monitor can update TrackingContext.ScriptingBridgeOk.
+    /// </summary>
+    public async Task<(ResolveStatus Status, bool BridgeOk)> GetCurrentStatusAsync()
+    {
+        var cmd  = JsonSerializer.Serialize(new { action = "status" });
+        var resp = await _backgroundDaemon.SendAsync(cmd);
+
+        if (resp is null) return (ResolveStatus.Empty, false);
+        if (resp["status"]?.GetValue<string>() != "ok") return (ResolveStatus.Empty, true);
+
+        var project   = resp["project"]?.GetValue<string>();
+        var page      = resp["page"]?.GetValue<string>();
+        var timeline  = resp["timeline"]?.GetValue<string>();
+        var rendering = resp["rendering"]?.GetValue<bool>() ?? false;
+
+        if (string.IsNullOrEmpty(page))     page     = null;
+        if (string.IsNullOrEmpty(timeline)) timeline = null;
+
+        if (string.IsNullOrEmpty(project) ||
+            project.Equals("Untitled Project", StringComparison.OrdinalIgnoreCase))
+            return (ResolveStatus.Empty, true);
+
+        return (new ResolveStatus(project, page, timeline, rendering), true);
+    }
+
+    // ── Node commands ─────────────────────────────────────────────────────────
 
     public async Task<List<AvailableNode>> GetAvailableNodesAsync()
     {
         _logger.Information("NodeToggle: requesting node list from DaVinci");
-        var cmd = JsonSerializer.Serialize(new { action = "list" });
+        var cmd  = JsonSerializer.Serialize(new { action = "list" });
         var resp = await _backgroundDaemon.SendAsync(cmd);
 
         if (resp?["status"]?.GetValue<string>() == "ok")
@@ -74,7 +111,7 @@ public sealed class NodeToggleApiClient : IDisposable
             })
         });
 
-        var resp = await _toggleDaemon.SendAsync(cmd);  // dedicated toggle daemon — immediate hotkey response
+        var resp = await _toggleDaemon.SendAsync(cmd);
 
         if (resp?["status"]?.GetValue<string>() == "ok")
         {
@@ -119,12 +156,12 @@ public sealed class NodeToggleApiClient : IDisposable
         });
 
         _logger.Information("NodeSelect: sending command: {Cmd}", cmd);
-        var resp = await _keystrokeDaemon.SendAsync(cmd);  // keystroke daemon — never blocks scripting operations
+        var resp = await _keystrokeDaemon.SendAsync(cmd);
         _logger.Information("NodeSelect: daemon response: {Resp}", resp?.ToJsonString());
 
         if (resp?["status"]?.GetValue<string>() == "ok")
         {
-            var nodeIndex = resp["nodeIndex"]?.GetValue<int>();
+            var nodeIndex  = resp["nodeIndex"]?.GetValue<int>();
             var totalNodes = resp["totalNodes"]?.GetValue<int>();
             _logger.Information("NodeSelect: success — navigated to node {Index}/{Total}", nodeIndex, totalNodes);
             return (true, nodeIndex);
@@ -133,6 +170,35 @@ public sealed class NodeToggleApiClient : IDisposable
         var msg = resp?["message"]?.GetValue<string>() ?? "(no response)";
         _logger.Warning("NodeSelect: failed — {Msg}", msg);
         return (false, null);
+    }
+
+    // ── Diagnostics ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Runs the daemon's diagnose action and returns the raw JSON node,
+    /// or null if the daemon is not connected or returns an error.
+    /// Used by ResolveDiagnosticsService (on-demand only).
+    /// </summary>
+    public async Task<JsonNode?> SendDiagnoseAsync()
+    {
+        var cmd = JsonSerializer.Serialize(new { action = "diagnose" });
+        return await _backgroundDaemon.SendAsync(cmd);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private void LogActionableHint(string msg)
+    {
+        if (msg.Contains("resolve_not_running"))
+            _logger.Warning("  → DaVinci Resolve is not running");
+        else if (msg.Contains("no_project"))
+            _logger.Warning("  → No project open in DaVinci Resolve");
+        else if (msg.Contains("not_found") || msg.Contains("all_nodes_failed"))
+            _logger.Warning("  → Node(s) not found — check IDs/titles in config");
+        else if (msg.Contains("modules_not_found"))
+            _logger.Warning("  → DaVinci Resolve scripting modules not found");
+        else if (msg.Contains("fusionscript"))
+            _logger.Warning("  → fusionscript IPC failure — check Python compatibility");
     }
 
     /// <summary>
@@ -180,86 +246,52 @@ public sealed class NodeToggleApiClient : IDisposable
         ["WINDOWS"] = 0x5B,
     };
 
-    // Common key names → Windows Virtual Key codes
     private static readonly Dictionary<string, int> s_keyNameToVk = BuildKeyMap();
 
     private static Dictionary<string, int> BuildKeyMap()
     {
         var m = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-        // Letters A-Z
         for (var c = 'A'; c <= 'Z'; c++)
             m[c.ToString()] = 0x41 + (c - 'A');
 
-        // Digits 0-9
         for (var d = '0'; d <= '9'; d++)
             m[d.ToString()] = 0x30 + (d - '0');
 
-        // Function keys F1-F24
         for (var i = 1; i <= 24; i++)
-            m[$"F{i}"] = 0x6F + i;  // VK_F1 = 0x70
+            m[$"F{i}"] = 0x6F + i;
 
-        // OEM keys (US layout)
-        m["OEM1"]       = 0xBA;  // ;:
-        m["OEMPLUS"]    = 0xBB;  // =+
-        m["OEMCOMMA"]   = 0xBC;  // ,<
-        m["OEMMINUS"]   = 0xBD;  // -_
-        m["OEMPERIOD"]  = 0xBE;  // .>
-        m["OEM2"]       = 0xBF;  // /?
-        m["OEM3"]       = 0xC0;  // `~
-        m["OEM4"]       = 0xDB;  // [{
-        m["OEM5"]       = 0xDC;  // \|
-        m["OEM6"]       = 0xDD;  // ]}
-        m["OEM7"]       = 0xDE;  // '"  ← Alt+Shift+' is Alt+Shift+Oem7
+        m["OEM1"]      = 0xBA;
+        m["OEMPLUS"]   = 0xBB;
+        m["OEMCOMMA"]  = 0xBC;
+        m["OEMMINUS"]  = 0xBD;
+        m["OEMPERIOD"] = 0xBE;
+        m["OEM2"]      = 0xBF;
+        m["OEM3"]      = 0xC0;
+        m["OEM4"]      = 0xDB;
+        m["OEM5"]      = 0xDC;
+        m["OEM6"]      = 0xDD;
+        m["OEM7"]      = 0xDE;
 
-        // Navigation / editing
-        m["BACK"]       = 0x08;
-        m["TAB"]        = 0x09;
-        m["RETURN"]     = 0x0D;
-        m["ESCAPE"]     = 0x1B;
-        m["SPACE"]      = 0x20;
-        m["LEFT"]       = 0x25;
-        m["UP"]         = 0x26;
-        m["RIGHT"]      = 0x27;
-        m["DOWN"]       = 0x28;
-        m["DELETE"]     = 0x2E;
-        m["HOME"]       = 0x24;
-        m["END"]        = 0x23;
-        m["PRIOR"]      = 0x21;  // Page Up
-        m["NEXT"]       = 0x22;  // Page Down
+        m["BACK"]   = 0x08;
+        m["TAB"]    = 0x09;
+        m["RETURN"] = 0x0D;
+        m["ESCAPE"] = 0x1B;
+        m["SPACE"]  = 0x20;
+        m["LEFT"]   = 0x25;
+        m["UP"]     = 0x26;
+        m["RIGHT"]  = 0x27;
+        m["DOWN"]   = 0x28;
+        m["DELETE"] = 0x2E;
+        m["HOME"]   = 0x24;
+        m["END"]    = 0x23;
+        m["PRIOR"]  = 0x21;
+        m["NEXT"]   = 0x22;
 
-        // Numpad
         for (var i = 0; i <= 9; i++)
             m[$"NUMPAD{i}"] = 0x60 + i;
 
         return m;
-    }
-
-    /// <summary>
-    /// Runs the daemon's diagnose action and returns the raw JSON node,
-    /// or null if the daemon is not connected or returns an error.
-    /// Used by ResolveDiagnosticsService.
-    /// </summary>
-    public async Task<JsonNode?> SendDiagnoseAsync()
-    {
-        var cmd = JsonSerializer.Serialize(new { action = "diagnose" });
-        return await _backgroundDaemon.SendAsync(cmd);
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private void LogActionableHint(string msg)
-    {
-        if (msg.Contains("resolve_not_running"))
-            _logger.Warning("  → DaVinci Resolve is not running");
-        else if (msg.Contains("no_project"))
-            _logger.Warning("  → No project open in DaVinci Resolve");
-        else if (msg.Contains("not_found") || msg.Contains("all_nodes_failed"))
-            _logger.Warning("  → Node(s) not found — check IDs/titles in config");
-        else if (msg.Contains("modules_not_found"))
-            _logger.Warning("  → DaVinci Resolve scripting modules not found");
-        else if (msg.Contains("fusionscript"))
-            _logger.Warning("  → fusionscript IPC failure — check Python compatibility");
     }
 
     public void Dispose()
@@ -268,4 +300,14 @@ public sealed class NodeToggleApiClient : IDisposable
         _keystrokeDaemon.Dispose();
         _backgroundDaemon.Dispose();
     }
+}
+
+/// <summary>Parsed status from the background daemon — one poll result.</summary>
+public record ResolveStatus(
+    string? ProjectName,
+    string? Page,
+    string? Timeline,
+    bool    IsRendering)
+{
+    public static readonly ResolveStatus Empty = new(null, null, null, false);
 }

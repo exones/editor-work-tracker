@@ -1,3 +1,4 @@
+using DaVinciTimeTracker.Core.Resolve;
 using DaVinciTimeTracker.Core.Services;
 using Serilog;
 using System.Text.Json;
@@ -11,7 +12,7 @@ namespace DaVinciTimeTracker.Core.NodeToggle;
 /// </summary>
 public class NodeToggleService : IDisposable
 {
-    private readonly NodeToggleApiClient _apiClient;
+    private readonly ResolveScriptingClient _apiClient;
     private readonly ILogger _logger;
     private readonly string _configPath;
     private UserSettingsService? _settingsService;
@@ -34,12 +35,12 @@ public class NodeToggleService : IDisposable
     /// <summary>Fired when the config file changes (after debounce), with the new group list.</summary>
     public event Action<List<ToggleGroup>>? ConfigChanged;
 
-    /// <summary>Exposes the underlying API client so diagnostics can call SendDiagnoseAsync.</summary>
-    public NodeToggleApiClient GetApiClient() => _apiClient;
+    /// <summary>Exposes the underlying scripting client for diagnostics and monitoring.</summary>
+    public ResolveScriptingClient GetApiClient() => _apiClient;
 
     public NodeToggleService(string pythonPath, string scriptPath, string configPath, ILogger logger)
     {
-        _apiClient = new NodeToggleApiClient(logger);
+        _apiClient = new ResolveScriptingClient(logger);
         if (!string.IsNullOrEmpty(pythonPath))
             _apiClient.SetPythonExecutable(pythonPath, scriptPath);
         _configPath = configPath;

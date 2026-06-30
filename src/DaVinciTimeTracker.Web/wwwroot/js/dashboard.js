@@ -989,8 +989,23 @@ function setBridgeHealth(color, text) {
     const txt  = document.getElementById('bridge-health-text');
     if (!pill) return;
     pill.dataset.level = color;
-    if (dot)  dot.style.background = color === 'green' ? '#4ade80' : color === 'amber' ? '#fbbf24' : '#f87171';
-    if (txt)  txt.textContent = text;
+    if (dot) dot.style.background = color === 'green' ? '#4ade80' : color === 'amber' ? '#fbbf24' : '#f87171';
+    if (txt) txt.textContent = text;
+
+    let link = document.getElementById('bridge-health-troubleshoot');
+    if (color === 'red') {
+        if (!link) {
+            link = document.createElement('a');
+            link.id = 'bridge-health-troubleshoot';
+            link.href = '#';
+            link.textContent = 'Troubleshoot →';
+            link.style.cssText = 'margin-left:8px;font-size:0.8em;color:#f87171;text-decoration:underline;';
+            link.onclick = e => { e.preventDefault(); switchTab('troubleshooter', document.getElementById('tab-btn-troubleshooter')); };
+            pill.appendChild(link);
+        }
+    } else if (link) {
+        link.remove();
+    }
 }
 
 // ── Troubleshooter Tab ────────────────────────────────────────────────────────

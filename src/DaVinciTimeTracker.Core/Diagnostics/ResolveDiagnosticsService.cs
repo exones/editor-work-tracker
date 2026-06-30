@@ -1,5 +1,4 @@
 using DaVinciTimeTracker.Core.Native;
-using DaVinciTimeTracker.Core.NodeToggle;
 using DaVinciTimeTracker.Core.Resolve;
 using DaVinciTimeTracker.Core.Utilities;
 using Serilog;
@@ -19,14 +18,14 @@ public sealed class ResolveDiagnosticsService
 {
     private readonly IResolvePlatform _platform;
     private readonly ISystemActivityProvider _activity;
-    private readonly NodeToggleApiClient _nodeToggleClient;
+    private readonly ResolveScriptingClient _nodeToggleClient;
     private string _pythonPath;
     private readonly ILogger _logger;
 
     public ResolveDiagnosticsService(
         IResolvePlatform platform,
         ISystemActivityProvider activity,
-        NodeToggleApiClient nodeToggleClient,
+        ResolveScriptingClient nodeToggleClient,
         string pythonPath,
         ILogger logger)
     {

@@ -303,13 +303,21 @@ public class ApiController : ControllerBase
 
     // ── Diagnostics ───────────────────────────────────────────────────────────
 
-    /// <summary>Lightweight health pill for the dashboard header.</summary>
+    /// <summary>
+    /// Lightweight health pill — reads the result of the last monitor poll (O(1), no daemon calls).
+    /// Red when Resolve is running but the scripting bridge failed; Amber when Resolve is not open.
+    /// </summary>
     [HttpGet("health")]
-    public async Task<IActionResult> GetHealth()
+    public IActionResult GetHealth()
     {
-        var results = await _diagnosticsService.RunAllAsync();
-        var summary = _diagnosticsService.GetHealthSummary(results);
-        return Ok(summary);
+        var snap = _trackingContext.Snapshot();
+        var (level, summary) = (snap.ScriptingBridgeOk, snap.IsResolveRunning) switch
+        {
+            (false, true)  => ("Red",   "Scripting bridge not connected"),
+            (true,  true)  => ("Green", "DaVinci scripting bridge OK"),
+            _              => ("Amber", "DaVinci Resolve not running")
+        };
+        return Ok(new { level, summary });
     }
 
     /// <summary>Full structured diagnostic check results for the Troubleshooter tab.</summary>
